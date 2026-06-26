@@ -1,0 +1,6 @@
+# Reference template — 50-code-server.sh writes the real file to
+# ~/.config/code-server/config.yaml (mode 600). Password comes from 1Password.
+bind-addr: 127.0.0.1:__CODE_SERVER_PORT__   # loopback only; Tailscale serve publishes it
+auth: password
+password: __CODE_SERVER_PASSWORD__
+cert: false

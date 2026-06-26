@@ -1,0 +1,28 @@
+# Laptop ~/.ssh/config entries for the dev VM. Two transports, same host.
+# Replace __TAILSCALE_NAME__ with the VM's MagicDNS name (or 100.x IP).
+
+# Primary: Tailscale (native VS Code Remote-SSH + mosh both use this).
+# Listing the MagicDNS short name, FQDN, and 100.x IP as aliases lets all three
+# `ssh` forms share this identity. Replace placeholders with your real values.
+Host __VM_NAME__ __TAILSCALE_FQDN__ __TAILSCALE_IP__
+  HostName __TAILSCALE_FQDN__
+  User __DEV_USER__
+  # Forward the 1Password SSH agent so keys stay TouchID-gated on the laptop.
+  # macOS 1Password agent socket:
+  IdentityAgent ~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agent.sock
+  ForwardAgent yes
+
+# Secondary: Cloudflare Access (works from networks without Tailscale)
+Host __VM_NAME__-cf
+  HostName __SSH_HOSTNAME__
+  User __DEV_USER__
+  ProxyCommand cloudflared access ssh --hostname %h
+  IdentityAgent ~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agent.sock
+  ForwardAgent yes
+
+# Headless / service-token variant of the Cloudflare path (no browser prompt).
+# Resolve the token from 1Password into the environment before connecting, e.g.:
+#   export TUNNEL_SERVICE_TOKEN_ID="$(op read 'op://__OP_VAULT__/CF-Access-__VM_NAME__/client-id')"
+#   export TUNNEL_SERVICE_TOKEN_SECRET="$(op read 'op://__OP_VAULT__/CF-Access-__VM_NAME__/client-secret')"
+# cloudflared access ssh reads these env vars. (Confirm current flag/env names against
+# `cloudflared access ssh --help` — Cloudflare's surface drifts between releases.)
