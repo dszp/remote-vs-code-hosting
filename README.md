@@ -4,10 +4,10 @@ An always-on AlmaLinux 10 dev VM you reach with **native VS Code Remote-SSH**, w
 **Claude Code keeps running even when the laptop is closed**.
 
 > **This is a sanitized template.** Environment-specific values are written as
-> `__PLACEHOLDER__` tokens (domain, hostnames, Proxmox host, dev user, 1Password
-> account/vault, etc.). Fill them in — see `env.example` for the full list — before
-> running anything. No secrets are stored here; all are resolved from 1Password (`op`)
-> at run time. See **Placeholders** at the bottom.
+> `__PLACEHOLDER__` tokens (domain, hostnames, Proxmox host, dev user, Mac user,
+> 1Password account/vault, etc.). Fill them in — see `env.example` for the full list —
+> before running anything. No secrets are stored here; all are resolved from 1Password
+> (`op`) at run time. See **Placeholders** at the bottom.
 
 Native feel and persistence are *separate problems*, solved in separate layers:
 
@@ -152,6 +152,14 @@ on the caller (`config/ssh-config.snippet` documents this).
 - **WARP** — Tailscale already carries UDP, so `mosh` works without it.
 - A browser-WebIDE-in-containers approach (OpenVSCode + rootless Podman + a self-hosted LLM) — a different (multi-tenant, untrusted-agent) problem; mined for hardening ideas only.
 
+## Secrets / op proxy (optional)
+
+`deploy/80-op-proxy.sh` (VM) + `mac/op-resolver-setup.sh` (Mac) install an `op` wrapper that
+resolves secrets two ways: **`mac` mode** routes `op read` / `op run --env-file` back to your
+Mac via a `RemoteForward`'d socket so they resolve with **TouchID** (no inbound to the Mac,
+nothing stored on the VM); **`token` mode** uses a local 1Password **service account**. Toggle
+with `op-mode`. See the scripts' headers and `~/OP-SECRETS.md` (created on the VM).
+
 ## Placeholders
 
 Fill these in (all live in `env.example`; some also appear in `config/ssh-config.snippet`):
@@ -164,6 +172,7 @@ Fill these in (all live in `env.example`; some also appear in `config/ssh-config
 | `__CF_ACCOUNT__` | Cloudflare account name | `Personal` |
 | `__VM_NAME__` | VM name / Tailscale node / SSH host alias / tunnel name | `dev` |
 | `__DEV_USER__` | Login user on the VM | `dev` |
+| `__MAC_USER__` | Your macOS username (op resolver paths/label) | `alex` |
 | `__PVE_HOST__` | Proxmox host (SSH target for VM creation) | `pve` |
 | `__PVE_TS_IP__` | Proxmox host's Tailscale IP (for `SSH_JUMP`) | `100.x.y.z` |
 | `__VM_LAN_IP__` | VM's LAN IP (pre-Tailscale, for `SSH_JUMP`) | `192.168.1.50` |
