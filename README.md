@@ -110,13 +110,36 @@ they're marked **[manual]**.
    ./deploy/run-remote.sh __VM_NAME__ deploy/70-cs-shortcut.sh                   # install the `cs` helper on PATH
    ```
 
-## Daily use
+## Cheatsheet
 
-- **Laptop, native:** VS Code Remote-SSH → `__VM_NAME__` (Tailscale) or `__VM_NAME__-cf` (Cloudflare, off-tailnet).
-- **Any browser:** `https://__CODE_HOSTNAME__` (Access → code-server password).
-- **Terminal:** `ssh __VM_NAME__` lands in tmux automatically; then `cs` (folder session), `cs <name>`, `cs ls`.
-- **Resilient terminal:** `mosh __VM_NAME__` then `cs`.
-- Run `claude` inside the tmux session for runs that survive the laptop going offline.
+Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
+
+**Connect**
+- `ssh __VM_NAME__` — main persistent session (auto-attaches; folder→session name, home→`claude`). A 2nd plain `ssh` re-attaches the same one.
+- `mosh __VM_NAME__` then `cs` — resilient over roaming/flaky links.
+- VS Code: Remote-SSH → `__VM_NAME__` (or `__VM_NAME__-cf` off-tailnet) → open `~/workspace/<project>`.
+- Any browser (incl. iPad): `https://__CODE_HOSTNAME__`.
+
+**Sessions (`cs` on the VM)**
+- `cs` folder session · `cs <name>` named · `cs -n [base]` new independent (`folder-2`, …) · `cs ls` list
+- reattach: `cs <name>` (VM) / `devx <name>` (Mac) · kill: `tmux kill-session -t <name>`
+
+**From the Mac (helpers in `~/.zshrc`)**
+- `devx` new independent session · `devx <name>` reattach/create named · `devsh` non-tmux scratch shell · `ssh __VM_NAME__ cs ls` list
+
+**Multiple terminals**
+- more shells, one tab: tmux windows — `Ctrl-b c` new · `Ctrl-b n`/`p` or `0-9` switch · `Ctrl-b w` list
+- independent tab/session: `devx` (Mac) or `cs -n` (VM) — won't mirror
+- non-tmux scratch: VS Code "+" → "shell (no tmux)" · Mac `devsh` · inline `NO_AUTO_TMUX=1 bash`
+- ⚠ two clients on the *same* session mirror window-switching (tmux by design) — use separate sessions
+
+**tmux basics** — detach `Ctrl-b d` · panes `Ctrl-b %` / `Ctrl-b "`, move `Ctrl-b <arrow>`, zoom `Ctrl-b z` · scroll `Ctrl-b [`
+
+**Claude Code** — run `claude` *inside tmux* so it survives the laptop offline; reattach via VS Code terminal / `ssh` / `mosh` then `cs`.
+
+**Secrets (`op` proxy)** — `op-mode status`; mac mode resolves `op read`/`op run --env-file` with TouchID on the Mac; `op-mode token` for headless. See `~/OP-SECRETS.md`.
+
+**After reboot** — `ssh __VM_NAME__` works on its own; the `claude` session is re-created empty (re-run `claude`). tmux+linger survive disconnect/logout, not reboot.
 
 ## If an `op`-gated step times out
 
