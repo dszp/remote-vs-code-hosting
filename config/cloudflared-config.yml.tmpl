@@ -1,0 +1,8 @@
+# Reference template — 30-cloudflared.sh generates the real file at
+# /etc/cloudflared/config.yml with these values filled in.
+tunnel: __TUNNEL_UUID__
+credentials-file: /etc/cloudflared/__TUNNEL_UUID__.json
+ingress:
+  - hostname: __CF_HOSTNAME__          # __SSH_HOSTNAME__
+    service: ssh://localhost:22
+  - service: http_status:404

@@ -1,0 +1,28 @@
+# ---- Secrets: never commit anything resolved from 1Password or generated on a host ----
+.env
+*.env
+!env.example
+*.secret
+secrets/
+# Cloudflare Tunnel credentials (per-tunnel JSON + cert)
+*.json
+.cloudflared/
+cert.pem
+# 1Password service-account tokens / any op-resolved output
+op-*.txt
+*.token
+# Tailscale auth keys if ever written to disk
+*.authkey
+# Rendered templates (contain real values) — keep only the *.tmpl in git
+config/*.rendered
+config/cloudflared-config.yml
+config/code-server.config.yaml
+# SSH keys
+id_*
+*.pem
+*.key
+# Local plan copy — contains host details (pve, tailscale IPs, hostnames)
+PLAN.local.md
+
+# OS cruft
+.DS_Store

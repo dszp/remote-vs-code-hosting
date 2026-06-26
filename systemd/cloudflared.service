@@ -1,0 +1,16 @@
+# Reference only — `cloudflared service install` (in 30-cloudflared.sh) generates the
+# real unit. Use this if you prefer to manage it by hand.
+[Unit]
+Description=cloudflared tunnel (remote-vs-code)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/cloudflared --config /etc/cloudflared/config.yml --no-autoupdate tunnel run
+Restart=on-failure
+RestartSec=5s
+User=root
+
+[Install]
+WantedBy=multi-user.target
