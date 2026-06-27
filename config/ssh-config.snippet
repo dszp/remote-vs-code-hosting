@@ -13,10 +13,14 @@ Host __VM_NAME__ __TAILSCALE_FQDN__ __TAILSCALE_IP__
   ForwardAgent yes
 
 # Secondary: Cloudflare Access (works from networks without Tailscale)
+# Use the ABSOLUTE path to cloudflared: VS Code Remote-SSH runs the ProxyCommand with a
+# minimal PATH that omits Homebrew, so a bare `cloudflared` fails with no clear error
+# (connection closes before auth, no TouchID prompt). `which cloudflared` to find yours
+# (Apple Silicon: /opt/homebrew/bin, Intel: /usr/local/bin).
 Host __VM_NAME__-cf
   HostName __SSH_HOSTNAME__
   User __DEV_USER__
-  ProxyCommand cloudflared access ssh --hostname %h
+  ProxyCommand /opt/homebrew/bin/cloudflared access ssh --hostname %h
   IdentityAgent ~/Library/Group\ Containers/2BUA8C4S2C.com.1password/t/agent.sock
   ForwardAgent yes
 
@@ -26,3 +30,24 @@ Host __VM_NAME__-cf
 #   export TUNNEL_SERVICE_TOKEN_SECRET="$(op read 'op://__OP_VAULT__/CF-Access-__VM_NAME__/client-secret')"
 # cloudflared access ssh reads these env vars. (Confirm current flag/env names against
 # `cloudflared access ssh --help` — Cloudflare's surface drifts between releases.)
+
+
+# === Optional post-deploy enhancements (see README "Post-deploy enhancements") ===
+
+# 'autodev': a SILENT host for VS Code Remote-SSH that does NOT use the 1Password agent,
+# so VS Code reconnects after the laptop resumes with no TouchID prompt (mac/autodev-key-setup.sh).
+# MUST sit ABOVE your 'Host *' block — ssh_config is first-match, and 'IdentityAgent none'
+# has to win over any agent set under 'Host *'.
+Host autodev
+  HostName __TAILSCALE_FQDN__
+  User __DEV_USER__
+  IdentityAgent none
+  IdentityFile ~/.ssh/autodev_ed25519
+  IdentitiesOnly yes
+  UseKeychain yes
+
+# Notify bridge: add this RemoteForward to EVERY host you reach the VM with (__VM_NAME__,
+# autodev, __VM_NAME__-cf) so Claude on the VM can raise a macOS notification on the laptop
+# (mac/notify-bridge-setup.sh + deploy/85-notify-hook.sh). Sits beside the op-resolver forward.
+#   RemoteForward /home/__DEV_USER__/.notify/mac.sock /Users/__MAC_USER__/.notify/notify.sock
+#   StreamLocalBindUnlink yes
