@@ -110,6 +110,50 @@ they're marked **[manual]**.
    ./deploy/run-remote.sh __VM_NAME__ deploy/70-cs-shortcut.sh                   # install the `cs` helper on PATH
    ```
 
+## Post-deploy enhancements (optional)
+
+Quality-of-life layers added after the core is working. Each is independent.
+
+**A. Silent VS Code host (`autodev`) — no TouchID on resume.** The 1Password SSH agent
+re-locks on sleep, so VS Code Remote-SSH re-prompts for TouchID on every reconnect. A
+dedicated key whose passphrase lives in the macOS login keychain connects silently, while
+`ssh __VM_NAME__` keeps prompting as before.
+```bash
+./mac/autodev-key-setup.sh          # gen key, keychain, 1Password backup, install pubkey
+```
+Then add the printed `Host autodev` block to `~/.ssh/config` **above `Host *`** (first-match;
+`IdentityAgent none` must win). Connect VS Code to `autodev`. Trade-off: anyone with your
+*unlocked* Mac can `ssh autodev` with no challenge — that is the point. Keep the internet-facing
+`__VM_NAME__-cf` on the 1Password agent (TouchID) instead.
+
+**B. Remote attention notifications.** Make Claude on the VM raise a macOS notification on the
+laptop, falling back to a phone push when the laptop is offline (the socket only exists while
+connected, so a failed desktop delivery *is* "offline").
+```bash
+./mac/notify-bridge-setup.sh                                   # laptop: socat listener + LaunchAgent
+./deploy/run-remote.sh __VM_NAME__ deploy/85-notify-hook.sh DEV_USER=__DEV_USER__   # VM: hook + push template
+```
+Add the `RemoteForward` for `~/.notify/mac.sock` to each VM host (see `config/ssh-config.snippet`).
+Push is dormant until you fill `~/.notify/push.env` on the VM (Pushover or ntfy) and register a
+device; `NOTIFY_PUSH_MODE` = `off|always|fallback`.
+
+**C. Laptop helpers.** `config/shell-helpers.sh` (append to `~/.zshrc`) adds `rcode [folder]`
+(open a VM workspace folder in a new Remote-SSH window) and `rpaste` (upload the clipboard image
+to the VM and copy back a path Claude can read — pasting a screenshot into a remote terminal only
+sends a local Mac path). For a screenshot hotkey, bind `mac/rpaste-upload.sh` in your launcher
+(e.g. BetterTouchTool). **[manual]** A Finder **Quick Action** (Automator → "Quick Action" receiving
+folders → Run Shell Script) makes a right-click "Open in VS Code Remote":
+```zsh
+host="autodev"   # or __VM_NAME__-cf for the Cloudflare fallback
+cli="/usr/local/bin/code"; [ -x "$cli" ] || cli="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+for f in "$@"; do "$cli" --new-window --folder-uri "vscode-remote://ssh-remote+$host/home/__DEV_USER__/workspace/${f:t}"; done
+```
+
+**D. Extensions & per-folder settings over Remote-SSH.** UI-affecting extensions (e.g. Peacock
+window colors) must be installed **in the remote** (Extensions view → "Install in SSH: …") to act
+on the remote workspace's `.vscode/settings.json`. A gitignored `.vscode/settings.json` won't ride
+along with `git clone`, so set such settings in the remote window directly.
+
 ## Cheatsheet
 
 Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
