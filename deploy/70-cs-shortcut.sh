@@ -7,7 +7,8 @@
 #                 completion installed by 65-auto-attach.sh Tab-completes folder names)
 #   cs <name>     a plain named session (started in the current dir)
 #   cs -n [base]  a NEW independent session (suffixed -2/-3 if taken)
-#   cs s          pick a session to switch to interactively (fzf, else tmux choose-tree)
+#   cs s|d|k      pick a session (fzf) and switch / detach-all-clients / kill it
+#                 (aliases: cs switch | cs detach | cs kill)
 #   cs ls         list sessions
 # Attaches with -D so a reconnect detaches any stale client (no mirror/scroll-lock).
 # Works inside tmux too (switches client instead of erroring on nesting).
@@ -27,23 +28,38 @@ cat > "$BIN" <<'CS'
 #                   works without cd'ing first (Tab-completes folder names, like cd)
 #   cs <name>       otherwise, a plain named session (started in the current dir)
 #   cs -n [base]    a NEW independent session (base/folder, suffixed -2/-3 if taken)
-#   cs s            pick a session to switch to interactively (fzf; falls back to
-#                   tmux's choose-tree when fzf is absent)
+#   cs s            pick a session and switch/attach to it    (alias: cs switch)
+#   cs d            pick a session and detach ALL its clients  (alias: cs detach; frees it,
+#                   never kills it)
+#   cs k            pick a session and KILL it                 (alias: cs kill)
+#                   s/d/k use fzf; `cs s` falls back to tmux choose-tree without it
 #   cs ls           list sessions
 set -euo pipefail
 new=0
 case "${1:-}" in
   ls|-l|list) exec tmux ls ;;
-  s|select|-s)
-    if command -v fzf >/dev/null 2>&1; then
-      sel="$(tmux ls 2>/dev/null | fzf --reverse --height=40% --prompt='switch to> ' | cut -d: -f1)" || true
-      [ -n "${sel:-}" ] || exit 0
-      if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t "$sel"; else exec tmux attach -d -t "$sel"; fi
-    elif [ -n "${TMUX:-}" ]; then
-      exec tmux choose-tree -Zs
-    else
-      echo "cs s needs fzf (e.g. 'sudo dnf install fzf'), or attach then press Ctrl-b s" >&2; exit 1
+  s|switch|select|-s|d|detach|k|kill)
+    act="$1"
+    if ! command -v fzf >/dev/null 2>&1; then
+      case "$act" in s|switch|select|-s) [ -n "${TMUX:-}" ] && exec tmux choose-tree -Zs ;; esac
+      echo "cs $act needs fzf (e.g. 'sudo dnf install fzf')" >&2; exit 1
     fi
+    case "$act" in
+      s|switch|select|-s) prompt="switch to" ;;
+      d|detach)           prompt="detach all from" ;;
+      k|kill)             prompt="KILL" ;;
+    esac
+    sel="$(tmux ls 2>/dev/null | fzf --reverse --height=40% --prompt="$prompt> " | cut -d: -f1)" || true
+    [ -n "${sel:-}" ] || exit 0
+    case "$act" in
+      s|switch|select|-s)
+        if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t "$sel"; else exec tmux attach -d -t "$sel"; fi ;;
+      d|detach)
+        if tmux detach-client -s "$sel" 2>/dev/null; then echo "detached all clients from '$sel'"; else echo "no clients on '$sel' (or gone)"; fi ;;
+      k|kill)
+        if tmux kill-session -t "$sel" 2>/dev/null; then echo "killed session '$sel'"; else echo "could not kill '$sel'" >&2; fi ;;
+    esac
+    exit 0
     ;;
   -n|--new)   new=1; shift ;;
 esac
@@ -73,4 +89,4 @@ CS
 chmod 0755 "$BIN"
 echo "installed $BIN"
 "$BIN" ls >/dev/null 2>&1 || true
-echo "usage: cs | cs . | cs <dir|name> | cs -n | cs s | cs ls"
+echo "usage: cs | cs . | cs <dir|name> | cs -n | cs s|d|k | cs ls"
