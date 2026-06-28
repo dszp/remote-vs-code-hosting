@@ -127,15 +127,33 @@ Then add the printed `Host autodev` block to `~/.ssh/config` **above `Host *`** 
 `__VM_NAME__-cf` on the 1Password agent (TouchID) instead.
 
 **B. Remote attention notifications.** Make Claude on the VM raise a macOS notification on the
-laptop, falling back to a phone push when the laptop is offline (the socket only exists while
+laptop, falling back to a **phone push** when the laptop is offline (the socket only exists while
 connected, so a failed desktop delivery *is* "offline").
 ```bash
 ./mac/notify-bridge-setup.sh                                   # laptop: socat listener + LaunchAgent
 ./deploy/run-remote.sh __VM_NAME__ deploy/85-notify-hook.sh DEV_USER=__DEV_USER__   # VM: hook + push template
 ```
 Add the `RemoteForward` for `~/.notify/mac.sock` to each VM host (see `config/ssh-config.snippet`).
-Push is dormant until you fill `~/.notify/push.env` on the VM (Pushover or ntfy) and register a
-device; `NOTIFY_PUSH_MODE` = `off|always|fallback`.
+Push is dormant until you fill `~/.notify/push.env` on the VM; `NOTIFY_PUSH_MODE` = `off|always|fallback`.
+
+The Pushover push is an **html message with up to three tappable links** for the folder Claude
+was working in:
+- **Web** — `https://<code-server>/?folder=<project>`: opens code-server in the browser at the
+  project dir **directly under `~/workspace`** (subfolder depth and `-2` session suffixes don't
+  matter; falls back to `~/workspace` itself if the cwd is outside it). Always shown.
+- **Code** / **Terminal** — open *inside Blink* on iOS via its `blinkshell://run` URL action: Code
+  opens that same project folder in Blink's Code editor; Terminal runs `mosh <host> "cs '<session>'"`
+  and attaches the **tmux session Claude is actually in** (resolved live via `tmux display-message`,
+  so a `-2` suffix or a git-subfolder cwd still lands on the right session; falls back to the
+  `claude` session if none resolves). These appear only when
+  `BLINK_URL_KEY` is set in `push.env` (enable URL actions in Blink — off by default). Why the
+  callback: Blink only intercepts `vscode://`, which is path-only and can't carry an https URL to
+  `code`, so `blinkshell://run` is the way to run a real command.
+
+Relevant `push.env` keys (all optional): `PUSHOVER_TOKEN`/`PUSHOVER_USER`, `PUSHOVER_DEVICE`
+(comma-separated device names, empty = all), `CODE_SERVER_URL`, `BLINK_URL_KEY`, `BLINK_MOSH_HOST`,
+or `NTFY_URL` for the ntfy alternative (single `Click` link). The Mac desktop notification always
+opens native VS Code via `vscode://`.
 
 **C. Laptop helpers.** `config/shell-helpers.sh` (append to `~/.zshrc`) adds `rcode [folder]`
 (open a VM workspace folder in a new Remote-SSH window) and `rpaste` (upload the clipboard image
@@ -159,14 +177,15 @@ along with `git clone`, so set such settings in the remote window directly.
 Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
 
 **Connect**
-- `ssh __VM_NAME__` — main persistent session (auto-attaches; folder→session name, home→`claude`). A 2nd plain `ssh` re-attaches the same one.
+- `ssh __VM_NAME__` — auto-attaches a persistent tmux session (folder→session name, home→`claude`). A 2nd terminal opened while that session is being viewed gets `folder-2` instead of mirroring it; `cs <folder>` forces the same one.
 - `mosh __VM_NAME__` then `cs` — resilient over roaming/flaky links.
 - VS Code: Remote-SSH → `__VM_NAME__` (or `__VM_NAME__-cf` off-tailnet) → open `~/workspace/<project>`.
 - Any browser (incl. iPad): `https://__CODE_HOSTNAME__`.
 
 **Sessions (`cs` on the VM)**
-- `cs` folder session · `cs <name>` named · `cs -n [base]` new independent (`folder-2`, …) · `cs ls` list
-- reattach: `cs <name>` (VM) / `devx <name>` (Mac) · kill: `tmux kill-session -t <name>`
+- `cs` folder session · `cs .` same · `cs <dir>` name+root a session after a folder, Tab-completes like `cd` (`cs Rem⇥`→`cs Remote-VS-Code`) · `cs <name>` named · `cs -n [base]` new independent (`folder-2`, …) · `cs ls` list
+- `cs` attaches with `-D` — a reconnect detaches the stale client, so no mirror/scroll-lock. reattach: `cs <name>` (VM) / `devx <name>` (Mac) · kill: `tmux kill-session -t <name>`
+- two clients fighting over one session? `tmux detach-client -a` drops every client **but yours** (never ends the session) · `tmux detach-client -t /dev/pts/N` drops one
 
 **From the Mac (helpers in `~/.zshrc`)**
 - `devx` new independent session · `devx <name>` reattach/create named · `devsh` non-tmux scratch shell · `ssh __VM_NAME__ cs ls` list
