@@ -38,6 +38,21 @@ set -euo pipefail
 new=0
 case "${1:-}" in
   ls|-l|list) exec tmux ls ;;
+  -h|--help|help)
+    cat <<'USAGE'
+cs — attach/create a persistent tmux session (attaches with -D: a reconnect detaches the stale client)
+  cs              session for the current folder (home -> 'claude')
+  cs .            same as `cs` (the current folder)
+  cs <dir>        name a session after a folder AND start it there (Tab-completes like cd)
+  cs <name>       a plain named session (started in the current dir)
+  cs -n [base]    a NEW independent session (suffixed -2/-3 if taken)
+  cs s | switch   pick a session (fzf) and switch/attach to it
+  cs d | detach   pick a session and detach ALL its clients (frees it; never kills)
+  cs k | kill     pick a session and KILL it
+  cs ls           list sessions
+  cs -h | --help  this help
+USAGE
+    exit 0 ;;
   s|switch|select|-s|d|detach|k|kill)
     act="$1"
     if ! command -v fzf >/dev/null 2>&1; then
