@@ -14,7 +14,9 @@
   (`cs Rem⇥` → `cs Remote-VS-Code`), so it works from `~/workspace` without `cd`-ing in first
 - `cs <name>` — attach/create a plain **named** session
 - `cs -n [base]` — a **new independent** session (`folder-2`, `folder-3`, …)
-- `cs s` / `cs d` / `cs k` — **interactive picker** (fzf) to **s**witch to / **d**etach all clients from / **k**ill a session (aliases: `cs switch`/`detach`/`kill`) · `cs ls` — just list
+- `cs s` / `cs d` / `cs k` — **s**witch to / **d**etach all clients from / **k**ill a session;
+  bare = **fzf picker** (the list shows each session's client count), or pass a name to act
+  directly (`cs k Remote-VS-Code-2`). Aliases: `cs switch`/`detach`/`kill` · `cs ls` — just list
 - `cs` attaches with `-D`: a reconnect detaches the stale client, so **no mirror/scroll-lock**
 - reattach later: `cs <name>` (on VM) · `devx <name>` (from the Mac)
 - kill: `tmux kill-session -t <name>` (on VM) · `ssh __VM_NAME__ tmux kill-session -t <name>` (Mac)
