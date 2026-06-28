@@ -1,5 +1,12 @@
 # Laptop ~/.ssh/config entries for the dev VM. Two transports, same host.
 # Replace __TAILSCALE_NAME__ with the VM's MagicDNS name (or 100.x IP).
+#
+# Paths below are macOS. On Windows the config lives at %USERPROFILE%\.ssh\config,
+# and the 1Password SSH agent is reached over a named pipe instead of a socket:
+# DROP the `IdentityAgent ...` line entirely (Windows OpenSSH uses the default
+# agent pipe \\.\pipe\openssh-ssh-agent, which 1Password registers when you enable
+# Settings → Developer → "Use the SSH agent" + the Windows app integration). Keep
+# `ForwardAgent yes`. See the "Windows client" section of the README.
 
 # Primary: Tailscale (native VS Code Remote-SSH + mosh both use this).
 # Listing the MagicDNS short name, FQDN, and 100.x IP as aliases lets all three

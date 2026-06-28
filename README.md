@@ -185,6 +185,31 @@ Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
 
 **After reboot** — `ssh __VM_NAME__` works on its own; the `claude` session is re-created empty (re-run `claude`). tmux+linger survive disconnect/logout, not reboot.
 
+## Windows client (basic access)
+
+The VM is unchanged — Windows is a *client-only* concern, and only basic access is
+supported (native VS Code + SSH). The Mac-only conveniences (the `op` TouchID
+reverse-resolver in `mac/`, the `devx`/`devsh`/`rcode` shell helpers, `mosh`) are **not**
+ported; use the browser code-server path or plain SSH instead.
+
+What you need on Windows:
+
+- **VS Code Remote-SSH**, **Tailscale**, and (for the secondary path) **cloudflared** all
+  have native Windows builds — install and sign in the same as on the Mac.
+- **SSH config** lives at `%USERPROFILE%\.ssh\config`. Use the same `Host __VM_NAME__` /
+  `__VM_NAME__-cf` entries from `config/ssh-config.snippet`, but **delete the
+  `IdentityAgent ...` line** — it's a macOS socket path. Keep `ForwardAgent yes`.
+- **1Password SSH agent**: in 1Password → Settings → Developer, enable **Use the SSH
+  agent** and the Windows app integration. Windows OpenSSH then talks to the agent over
+  `\\.\pipe\openssh-ssh-agent` automatically (no `IdentityAgent` needed), and your key
+  stays Windows-Hello-gated on the laptop — same trust model as TouchID on the Mac.
+- **Getting your public key** (the step-1 `PUBKEY` one-liner is macOS-specific): with the
+  1Password agent enabled, just run `ssh-add -L` in PowerShell and take the matching line.
+- **Secrets**: there's no biometric `op` resolver on Windows. For the rare on-VM secret,
+  use the scoped 1Password **service-account token** path (`op-mode token`) instead.
+- **`mosh`** has no maintained native Windows client — rely on plain SSH/Tailscale, or the
+  zero-install browser IDE at `https://__CODE_HOSTNAME__` for roaming/flaky links.
+
 ## If an `op`-gated step times out
 
 You're probably away from the console (1Password locked). The script stops and reports where
