@@ -55,6 +55,16 @@
 - **broadcast input:** `:setw synchronize-panes on` types into every pane at once (`off` to stop) — handy for the same command across hosts
 - **reload / inspect:** `Ctrl-b :source-file ~/.tmux.conf` after editing the config · `Ctrl-b ?` lists every key binding (`q` exits) · toggle mouse `Ctrl-b m`
 
+## tmux config — what we changed (`~/.tmux.conf`; repo copy `config/tmux.conf`)
+- **mouse on** (`set -g mouse on`) — wheel / iPad tap-drag scrolls the scrollback; toggle with `Ctrl-b m`. Wheel is tuned to **1 line per tick** (iPad tap-drag fired too many events and felt jumpy).
+- **100k scrollback** (`history-limit 100000`) · **status name width 40** (`status-left-length 40`, so `-2`/`-3` suffixes aren't cut off) · status bar at `bottom` (flip to `top` if it overlaps Claude's statusline).
+- **`aggressive-resize on`** — a window sizes to the smallest client *actually viewing it*, not every client on the session (less shrink when devices differ).
+- **`focus-events on`** — apps inside panes (Claude Code, vim) get focus in/out events.
+- **extended keys** (`extended-keys always` + `*:extkeys`) — Alt/Ctrl key combos pass through to editors instead of being mangled.
+- **bell pass-through** (`monitor-bell on`, `bell-action any`, `visual-bell off`, `bel` override) — a terminal bell from any window reaches the outer terminal / VS Code so Claude notifications ring; the ringing window is flagged red in the status bar.
+- **`update-environment VSCODE_IPC_HOOK_CLI`** — the code-server IPC socket flows into the session env on attach, so the `code` wrapper targets the right window.
+- reload after edits: `Ctrl-b :source-file ~/.tmux.conf`. (10-base.sh only drops the repo copy if `~/.tmux.conf` is absent — it won't overwrite an existing one.)
+
 ## Claude Code
 - Run `claude` **inside a tmux session** → it survives the laptop going offline.
 - Reattach from anywhere: VS Code terminal · `ssh __VM_NAME__` · `mosh __VM_NAME__` then `cs`.
