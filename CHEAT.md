@@ -34,10 +34,26 @@
 - ⚠ Two clients on the **same** session mirror window-switching (tmux by design) — use separate sessions, or `tmux detach-client -a` to drop every client **but yours** (never ends the session).
 
 ## tmux basics
-- detach `Ctrl-b d` · reattach `cs <name>`
-- windows: new `Ctrl-b c` · switch `Ctrl-b 0-9` / `n` / `p` · rename `Ctrl-b ,`
-- panes: split `Ctrl-b %` (vertical) / `Ctrl-b "` (horizontal) · move `Ctrl-b <arrow>` · zoom `Ctrl-b z`
-- scroll/copy mode: `Ctrl-b [` (then arrows/PgUp; `q` to exit)
+- **prefix** = `Ctrl-b` — press & release it, *then* the key (so "`Ctrl-b d`" = prefix, then `d`)
+- detach `Ctrl-b d` · reattach with `cs <name>` (or `tmux attach -t <name>`)
+- windows (tabs): new `Ctrl-b c` · switch `Ctrl-b 0-9` / `n` / `p` · list `Ctrl-b w` · rename `Ctrl-b ,`
+- panes (splits): `Ctrl-b %` vertical · `Ctrl-b "` horizontal · move `Ctrl-b <arrow>` · zoom `Ctrl-b z`
+- scroll back: `Ctrl-b [` then arrows/PgUp (`q` to exit) — or just mouse-wheel / tap-drag (mouse is on)
+- **the same by hand** (what `cs` wraps — useful when `cs` isn't on PATH):
+  - `cs` / `cs <name>` → `tmux new -A -D -s <name>` — attach if it exists, else create (`-D` drops a stale client)
+  - `cs ls` → `tmux ls` · `cs -n` → `tmux new -s <name>` (always a fresh session)
+  - `cs s <name>` → `tmux switch-client -t <name>` (inside tmux) / `tmux attach -d -t <name>` (from outside)
+  - `cs d <name>` → `tmux detach-client -s <name>` (boot all its clients) · `cs k <name>` → `tmux kill-session -t <name>`
+
+## tmux advanced — the next useful bits
+- **command prompt:** `Ctrl-b :` then a tmux command — everything below also has a `:command` form
+- **sessions:** rename `Ctrl-b $` · visual switcher `Ctrl-b s` · next/prev `Ctrl-b )` / `(` · last-used `Ctrl-b L`
+- **windows:** find by name `Ctrl-b f` · last-used `Ctrl-b l` · move to another index `Ctrl-b .` · kill `Ctrl-b &`
+- **panes:** resize `Ctrl-b Ctrl-<arrow>` (keep Ctrl held; repeatable) or `:resize-pane -L/-R/-U/-D 5` · cycle layouts `Ctrl-b <space>` · swap `Ctrl-b {` / `}` · kill `Ctrl-b x`
+- **pane ↔ window:** pop a pane out to its own window `Ctrl-b !` · pull a window in as a pane `:join-pane -s <window>`
+- **copy / search scrollback:** in copy mode (`Ctrl-b [`) search `/` (down) or `?` (up), `n`/`N` to repeat; select `Space`, copy `Enter`, paste `Ctrl-b ]`. (Search keys are vi-style; enable with `:setw -g mode-keys vi`. With the mouse, just drag to select+copy.)
+- **broadcast input:** `:setw synchronize-panes on` types into every pane at once (`off` to stop) — handy for the same command across hosts
+- **reload / inspect:** `Ctrl-b :source-file ~/.tmux.conf` after editing the config · `Ctrl-b ?` lists every key binding (`q` exits) · toggle mouse `Ctrl-b m`
 
 ## Claude Code
 - Run `claude` **inside a tmux session** → it survives the laptop going offline.
