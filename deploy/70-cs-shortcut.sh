@@ -7,6 +7,7 @@
 #                 completion installed by 65-auto-attach.sh Tab-completes folder names)
 #   cs <name>     a plain named session (started in the current dir)
 #   cs -n [base]  a NEW independent session (suffixed -2/-3 if taken)
+#   cs s          pick a session to switch to interactively (fzf, else tmux choose-tree)
 #   cs ls         list sessions
 # Attaches with -D so a reconnect detaches any stale client (no mirror/scroll-lock).
 # Works inside tmux too (switches client instead of erroring on nesting).
@@ -26,11 +27,24 @@ cat > "$BIN" <<'CS'
 #                   works without cd'ing first (Tab-completes folder names, like cd)
 #   cs <name>       otherwise, a plain named session (started in the current dir)
 #   cs -n [base]    a NEW independent session (base/folder, suffixed -2/-3 if taken)
+#   cs s            pick a session to switch to interactively (fzf; falls back to
+#                   tmux's choose-tree when fzf is absent)
 #   cs ls           list sessions
 set -euo pipefail
 new=0
 case "${1:-}" in
   ls|-l|list) exec tmux ls ;;
+  s|select|-s)
+    if command -v fzf >/dev/null 2>&1; then
+      sel="$(tmux ls 2>/dev/null | fzf --reverse --height=40% --prompt='switch to> ' | cut -d: -f1)" || true
+      [ -n "${sel:-}" ] || exit 0
+      if [ -n "${TMUX:-}" ]; then exec tmux switch-client -t "$sel"; else exec tmux attach -d -t "$sel"; fi
+    elif [ -n "${TMUX:-}" ]; then
+      exec tmux choose-tree -Zs
+    else
+      echo "cs s needs fzf (e.g. 'sudo dnf install fzf'), or attach then press Ctrl-b s" >&2; exit 1
+    fi
+    ;;
   -n|--new)   new=1; shift ;;
 esac
 arg="${1:-}"
@@ -59,4 +73,4 @@ CS
 chmod 0755 "$BIN"
 echo "installed $BIN"
 "$BIN" ls >/dev/null 2>&1 || true
-echo "usage: cs | cs . | cs <dir|name> | cs -n | cs ls"
+echo "usage: cs | cs . | cs <dir|name> | cs -n | cs s | cs ls"

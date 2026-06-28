@@ -183,7 +183,7 @@ Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
 - Any browser (incl. iPad): `https://__CODE_HOSTNAME__`.
 
 **Sessions (`cs` on the VM)**
-- `cs` folder session · `cs .` same · `cs <dir>` name+root a session after a folder, Tab-completes like `cd` (`cs Rem⇥`→`cs Remote-VS-Code`) · `cs <name>` named · `cs -n [base]` new independent (`folder-2`, …) · `cs ls` list
+- `cs` folder session · `cs .` same · `cs <dir>` name+root a session after a folder, Tab-completes like `cd` (`cs Rem⇥`→`cs Remote-VS-Code`) · `cs <name>` named · `cs -n [base]` new independent (`folder-2`, …) · `cs s` interactive picker (fzf) · `cs ls` list
 - `cs` attaches with `-D` — a reconnect detaches the stale client, so no mirror/scroll-lock. reattach: `cs <name>` (VM) / `devx <name>` (Mac) · kill: `tmux kill-session -t <name>`
 - two clients fighting over one session? `tmux detach-client -a` drops every client **but yours** (never ends the session) · `tmux detach-client -t /dev/pts/N` drops one
 
