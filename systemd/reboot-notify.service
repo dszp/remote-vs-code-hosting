@@ -1,0 +1,11 @@
+# Reference only — deploy/90-auto-updates.sh writes the rendered unit (with the real
+# DEV_USER) to /etc/systemd/system. Runs the per-user reboot-pending push check as the
+# dev user, reusing ~/.notify/push.env. Paired with reboot-notify.timer.
+[Unit]
+Description=Notify (push) when a reboot is pending after security updates
+
+[Service]
+Type=oneshot
+User=__DEV_USER__
+Environment=HOME=/home/__DEV_USER__
+ExecStart=/home/__DEV_USER__/.notify/reboot-check.sh

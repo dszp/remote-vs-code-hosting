@@ -77,6 +77,14 @@
 - **token mode** (headless): place a service-account token, `op-mode token`; revert with `op-mode mac`
 - full notes: `~/OP-SECRETS.md` on the VM
 
+## Updates
+- Security updates apply **daily, automatically** (`dnf-automatic.timer`); the VM **never
+  reboots on its own**. When a reboot becomes pending you're alerted via the same bridge as
+  Claude: Mac desktop notification if the laptop's connected, else a push (Blink-mosh link).
+- Status: `systemctl status dnf-automatic.timer reboot-notify.timer` · last run:
+  `journalctl -u dnf-automatic.service -n 30` · check now: `dnf needs-restarting -r` (exit 1 = reboot needed).
+- Reboot when ready: `sudo reboot` (or `sudo systemctl reboot`).
+
 ## After a reboot
 - `ssh __VM_NAME__` works on its own (tailscaled + sshd auto-start).
 - The `claude` session is re-created empty by the boot service; anything that was *running* stopped — re-run `claude`.

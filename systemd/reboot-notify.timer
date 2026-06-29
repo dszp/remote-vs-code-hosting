@@ -1,0 +1,13 @@
+# Reference only — deploy/90-auto-updates.sh installs + enables this timer. Fires the
+# reboot-pending check once a day (after dnf-automatic has had its run); Persistent=true
+# catches up if the VM was off at the scheduled time.
+[Unit]
+Description=Daily check for a pending reboot (security updates)
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target
