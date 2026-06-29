@@ -56,7 +56,9 @@
 - **reload / inspect:** `Ctrl-b :source-file ~/.tmux.conf` after editing the config · `Ctrl-b ?` lists every key binding (`q` exits) · toggle mouse `Ctrl-b m`
 
 ## tmux config — what we changed (`~/.tmux.conf`; repo copy `config/tmux.conf`)
-- **mouse on** (`set -g mouse on`) — wheel / iPad tap-drag scrolls the scrollback; toggle with `Ctrl-b m`. Wheel is tuned to **1 line per tick** (iPad tap-drag fired too many events and felt jumpy).
+- **mouse on** (`set -g mouse on`) — wheel / iPad tap-drag scrolls the scrollback; toggle with `Ctrl-b m` (status bar shows **MOUSE ON/OFF**). Wheel is tuned to **1 line per tick** (iPad tap-drag fired too many events and felt jumpy). **Why the toggle matters:** Claude Code now runs **fullscreen and grabs the mouse** too (so you can click its UI). tmux-mouse **and** Claude-mouse on at the same time = `aN;NaNM` click-drag garbage — only one layer should own the mouse. Working in Claude and want to click? `Ctrl-b m` hands the mouse to Claude; flip it back for wheel scrollback in shells.
+- **mouse-state indicator** — the status bar (right side) shows `MOUSE ON` (green = tmux owns the mouse) or `MOUSE OFF` (red = handed to Claude / native selection), so you always know which layer has it.
+- **clipboard bridge (OSC 52)** (`set-clipboard on` + `terminal-features ',*:clipboard'`) — copying in tmux (mouse drag-end **or** copy-mode `Enter`) also lands on your **local** Mac/iPad clipboard. Needs ghostty `clipboard-write = allow` on the client. **Works over SSH only** — mainline `mosh` drops OSC 52, so over mosh use **Shift-drag** (hold Shift while selecting → ghostty's own selection, bypasses tmux) instead. Shift-drag works on every transport.
 - **100k scrollback** (`history-limit 100000`) · **status name width 40** (`status-left-length 40`, so `-2`/`-3` suffixes aren't cut off) · status bar at `bottom` (flip to `top` if it overlaps Claude's statusline).
 - **`aggressive-resize on`** — a window sizes to the smallest client *actually viewing it*, not every client on the session (less shrink when devices differ).
 - **`focus-events on`** — apps inside panes (Claude Code, vim) get focus in/out events.
@@ -69,6 +71,7 @@
 - Run `claude` **inside a tmux session** → it survives the laptop going offline.
 - Reattach from anywhere: VS Code terminal · `ssh __VM_NAME__` · `mosh __VM_NAME__` then `cs`.
 - The code-server **extension** panel is window-bound; the **tmux terminal** is the durable one.
+- Runs **fullscreen with the mouse enabled** (`"tui": "fullscreen"`, no `CLAUDE_CODE_DISABLE_MOUSE`). To click Claude's UI cleanly, hand it the mouse: `Ctrl-b m` to turn **tmux** mouse OFF (else the two fight → `aN;NaNM` garbage). For wheel scroll without clicks instead, set `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1`. **Copy from Claude:** Shift-drag (ghostty native) always works; over SSH a tmux copy also hits the local clipboard (OSC 52).
 
 ## Secrets (`op` proxy)
 - `op-mode status` — current mode + whether the Mac resolver socket is present

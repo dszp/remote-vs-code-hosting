@@ -193,6 +193,19 @@ Test without waiting for a real pending reboot:
 `sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ /home/__DEV_USER__/.notify/reboot-check.sh` — it only sends if a
 reboot is genuinely pending, so temporarily flip the `-r` guard to force one.
 
+**F. Remote→local clipboard (OSC 52) + Claude Code mouse.** Copy text on the VM and have it
+land on the **laptop/iPad** clipboard. tmux emits an **OSC 52** escape on copy
+(`set-clipboard on` + `terminal-features ',*:clipboard'` in `config/tmux.conf`); the local
+terminal writes the clipboard — ghostty needs `clipboard-write = allow`. **Works over SSH
+only**: mainline `mosh` (1.4.x) parses and **drops** OSC 52, so over mosh fall back to
+**Shift-drag** (ghostty's own selection, which bypasses tmux/Claude and works on every
+transport). Separately, Claude Code now runs `"tui": "fullscreen"` with the mouse enabled
+(remove `CLAUDE_CODE_DISABLE_MOUSE` from `~/.claude/settings.json`, or set
+`CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1` to keep wheel scroll without clicks). Because tmux-mouse
+**and** Claude-fullscreen-mouse on at once cause `aN;NaNM` click-drag garbage, only one layer
+should own the mouse at a time — toggle tmux's with **`Ctrl-b m`** (the status bar shows
+**MOUSE ON/OFF**).
+
 ## Cheatsheet
 
 Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
