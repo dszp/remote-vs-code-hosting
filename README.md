@@ -172,6 +172,27 @@ window colors) must be installed **in the remote** (Extensions view → "Install
 on the remote workspace's `.vscode/settings.json`. A gitignored `.vscode/settings.json` won't ride
 along with `git clone`, so set such settings in the remote window directly.
 
+**E. Automatic security updates + reboot-pending alert.** Apply security updates daily and
+**never reboot automatically** — instead get notified the moment a reboot becomes pending,
+so you choose when. Reuses the **B** notify bridge, so the alert behaves exactly like a
+Claude attention notification: native macOS notification when the laptop is connected, push
+(Pushover/ntfy) fallback when it's offline.
+```bash
+./deploy/run-remote.sh __VM_NAME__ deploy/90-auto-updates.sh DEV_USER=__DEV_USER__
+```
+`dnf-automatic` runs `upgrade_type=security`, `apply_updates=yes`, `reboot=never` on a daily
+timer (errata-driven — only advisory-flagged packages apply). A second daily timer
+(`reboot-notify.timer`) runs `dnf needs-restarting -r` and, when a reboot is pending
+(kernel / core libs / systemd), notifies via the bridge:
+- **Laptop connected** → native macOS notification (terminal-notifier), same as Claude.
+- **Laptop offline** → push. The Pushover body carries a **Terminal · Blink (mosh)** link
+  (`blinkshell://run` → `mosh <host>`) when `BLINK_URL_KEY` is set, so you can jump on from
+  your phone. `NOTIFY_PUSH_MODE` (`off`/`always`/`fallback`, default `fallback`) is shared with **B**.
+
+Test without waiting for a real pending reboot:
+`sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ /home/__DEV_USER__/.notify/reboot-check.sh` — it only sends if a
+reboot is genuinely pending, so temporarily flip the `-r` guard to force one.
+
 ## Cheatsheet
 
 Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
