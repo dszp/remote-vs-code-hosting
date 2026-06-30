@@ -11,7 +11,17 @@ HOST="${RCODE_HOST:-autodev}"
 DIR="${RPASTE_DIR:-/home/__DEV_USER__/.cache/pastes}"
 NAME="paste-$(date +%Y%m%d-%H%M%S).png"
 NOTIFIER="/opt/homebrew/bin/terminal-notifier"
-notify() { [ -x "$NOTIFIER" ] && "$NOTIFIER" -title "rpaste" -message "$1" -sound "${2:-Pop}" >/dev/null 2>&1; }
+GROUP="rpaste"
+# notify MSG [SOUND] [DISMISS]
+# terminal-notifier 2.0.0 has no -timeout, so when macOS shows these as Alerts
+# they stick until dismissed. DISMISS (seconds) schedules a detached -remove so
+# the success toast self-clears; omit it to leave a notification sticky (errors).
+notify() {
+  [ -x "$NOTIFIER" ] || return 0
+  "$NOTIFIER" -title "rpaste" -message "$1" -sound "${2:-Pop}" -group "$GROUP" >/dev/null 2>&1
+  [ -n "$3" ] && ( sleep "$3"; "$NOTIFIER" -remove "$GROUP" >/dev/null 2>&1 ) &
+  disown 2>/dev/null || true
+}
 
 TMP="$(mktemp -t rpaste).png"
 if ! /opt/homebrew/bin/pngpaste "$TMP" 2>/dev/null; then
@@ -22,4 +32,4 @@ if ! /usr/bin/ssh "$HOST" "mkdir -p $DIR && cat > '$DIR/$NAME'" < "$TMP"; then
 fi
 rm -f "$TMP"
 printf '%s/%s' "$DIR" "$NAME" | /usr/bin/pbcopy
-notify "Uploaded → $NAME · path copied, ⌘V into Claude" Glass
+notify "Uploaded → $NAME · path copied, ⌘V into Claude" Glass 5
