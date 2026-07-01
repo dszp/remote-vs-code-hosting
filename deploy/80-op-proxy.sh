@@ -67,28 +67,45 @@ fi
 
 # ---- mac mode: resolve via the RemoteForward'd socket (TouchID on the Mac) ----
 SOCK="$DIR/mac.sock"
-_resolve() {  # $1 = op:// ref -> prints value (no trailing newline) or returns 1
+# Default account hint for the Mac resolver: an item outside the resolver's default
+# 1Password account only resolves if we tell the Mac which account to read from. Set
+# OP_ACCOUNT (or pass `--account` to read/run) to a sign-in address like foo.1password.com.
+ACCT="${OP_ACCOUNT:-}"
+_resolve() {  # $1 = op:// ref, $2 = account hint (optional) -> prints value or returns 1
   [ -S "$SOCK" ] || { echo "op(mac): resolver socket missing ($SOCK). Connect from your Mac, or 'op-mode token'." >&2; return 1; }
   local out
-  out="$(printf '%s\n' "$1" | socat -t120 - UNIX-CONNECT:"$SOCK" 2>/dev/null)" || { echo "op(mac): resolver connect failed" >&2; return 1; }
+  if [ -n "${2:-}" ]; then                         # 2-line form: <account>\n<ref>
+    out="$(printf '%s\n%s\n' "$2" "$1" | socat -t120 - UNIX-CONNECT:"$SOCK" 2>/dev/null)" || { echo "op(mac): resolver connect failed" >&2; return 1; }
+  else                                             # legacy 1-line form: just the ref
+    out="$(printf '%s\n' "$1" | socat -t120 - UNIX-CONNECT:"$SOCK" 2>/dev/null)" || { echo "op(mac): resolver connect failed" >&2; return 1; }
+  fi
   case "$out" in ERR*|'') echo "op(mac): resolve failed for $1 ($out)" >&2; return 1 ;; esac
   printf '%s' "$out"
 }
 
 case "${1:-}" in
   read)
-    shift; ref=""
-    for a in "$@"; do case "$a" in op://*) ref="$a" ;; esac; done
+    shift; ref=""; acct="$ACCT"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --account=*) acct="${1#*=}"; shift ;;
+        --account)   acct="${2:-}"; shift 2 ;;
+        op://*)      ref="$1"; shift ;;
+        *)           shift ;;
+      esac
+    done
     [ -n "$ref" ] || { echo "op(mac): no op:// reference in 'op read' args" >&2; exit 1; }
-    val="$(_resolve "$ref")" || exit 1
+    val="$(_resolve "$ref" "$acct")" || exit 1
     printf '%s\n' "$val"
     ;;
   run)
-    shift; envfiles=()
+    shift; envfiles=(); acct="$ACCT"
     while [ $# -gt 0 ]; do
       case "$1" in
         --env-file=*) envfiles+=("${1#*=}"); shift ;;
         --env-file)   envfiles+=("$2"); shift 2 ;;
+        --account=*)  acct="${1#*=}"; shift ;;
+        --account)    acct="${2:-}"; shift 2 ;;
         --)           shift; break ;;
         --*)          shift ;;
         *)            break ;;
@@ -101,14 +118,14 @@ case "${1:-}" in
         case "$line" in ''|\#*) continue ;; esac
         [ "${line#*=}" = "$line" ] && continue
         name="${line%%=*}"; val="${line#*=}"
-        case "$val" in op://*) val="$(_resolve "$val")" || exit 1 ;; esac
+        case "$val" in op://*) val="$(_resolve "$val" "$acct")" || exit 1 ;; esac
         kv+=("$name=$val")
       done < "$f"
     done
     # also resolve op:// values already present in the environment
     while IFS= read -r ev; do
       n="${ev%%=*}"; v="${ev#*=}"
-      case "$v" in op://*) kv+=("$n=$(_resolve "$v")") ;; esac
+      case "$v" in op://*) kv+=("$n=$(_resolve "$v" "$acct")") ;; esac
     done < <(env)
     exec env "${kv[@]}" "$@"
     ;;
@@ -163,6 +180,11 @@ nothing inbound to the Mac, nothing stored here.
   `op-mode status` shows whether the socket is present.
 - Supported: `op read` and `op run --env-file`. For `op inject`/`op item`/other
   subcommands, use token mode.
+- **Multiple 1Password accounts:** the Mac resolver reads from a default account. To
+  resolve an item that lives in a different account, tell it which one — either export
+  `OP_ACCOUNT=<sign-in-address>` (e.g. `foo.1password.com`; it's inherited by anything
+  that shells out to `op`) or pass `op read --account <addr> op://...`. Without a hint,
+  the default account is used (unchanged behavior).
 - Each resolve prompts TouchID unless 1Password has a cached session (tune in 1Password's
   security settings). Accesses are logged on the Mac at `~/.op-resolver/access.log`.
 

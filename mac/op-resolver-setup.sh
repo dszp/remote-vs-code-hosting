@@ -22,16 +22,32 @@ echo ">> writing resolver scripts in $DIR"
 mkdir -p "$DIR"
 cat > "$DIR/resolve.sh" <<RESOLVE
 #!/bin/bash
-# Per-connection: read ONE op:// ref on stdin, return the secret. op read only; logged.
+# Per-connection resolver. Wire protocol on stdin (the VM's op proxy speaks it):
+#   1-line form (legacy): a bare op:// ref            -> resolved against the default account
+#   2-line form:          <account>\n<op:// ref>      -> resolved against <account>
+# The account hint lets items that live in a NON-default 1Password account resolve
+# (the VM sends it from its own --account/OP_ACCOUNT). An empty or malformed hint falls
+# back to the default below. op read only; every access is logged. TouchID still gates
+# each read, so the hint only widens WHICH signed-in account is queried, not whether.
 set -euo pipefail
-OP="$OP"; OP_ACCOUNT="$OP_ACCOUNT"; LOG="\$HOME/.op-resolver/access.log"
-IFS= read -r ref || exit 0; ref="\${ref%\$'\r'}"; ts="\$(date '+%Y-%m-%d %H:%M:%S')"
+OP="$OP"; OP_ACCOUNT_DEFAULT="$OP_ACCOUNT"; LOG="\$HOME/.op-resolver/access.log"
+ts="\$(date '+%Y-%m-%d %H:%M:%S')"
+IFS= read -r l1 || exit 0; l1="\${l1%\$'\r'}"
+case "\$l1" in
+  op://*) acct=""; ref="\$l1" ;;                              # legacy single-line form
+  *)      acct="\$l1"; IFS= read -r ref || exit 0; ref="\${ref%\$'\r'}" ;;
+esac
 case "\$ref" in op://*) ;; *) printf 'ERR not-an-op-ref\n'; printf '%s DENY %s\n' "\$ts" "\$ref" >> "\$LOG"; exit 0 ;; esac
 if [ "\${#ref}" -gt 512 ] || printf '%s' "\$ref" | LC_ALL=C grep -q '[[:cntrl:]]'; then
   printf 'ERR bad-ref\n'; printf '%s DENY(bad) %s\n' "\$ts" "\$ref" >> "\$LOG"; exit 0; fi
-if val="\$("\$OP" read --account "\$OP_ACCOUNT" -- "\$ref" 2>/dev/null)"; then
-  printf '%s\n' "\$val"; printf '%s OK   %s\n' "\$ts" "\$ref" >> "\$LOG"
-else printf 'ERR op-read-failed\n'; printf '%s FAIL %s\n' "\$ts" "\$ref" >> "\$LOG"; fi
+# Constrain the account hint to a safe identifier (sign-in address / email / UUID / shorthand);
+# on anything else, log and fall back to the default rather than pass it to op.
+if [ -n "\$acct" ] && { [ "\${#acct}" -gt 128 ] || printf '%s' "\$acct" | LC_ALL=C grep -Eqv '^[A-Za-z0-9._@-]+\$'; }; then
+  printf '%s WARN bad-account(%s) -> default\n' "\$ts" "\$acct" >> "\$LOG"; acct=""; fi
+account="\${acct:-\$OP_ACCOUNT_DEFAULT}"
+if val="\$("\$OP" read --account "\$account" -- "\$ref" 2>/dev/null)"; then
+  printf '%s\n' "\$val"; printf '%s OK   [%s] %s\n' "\$ts" "\$account" "\$ref" >> "\$LOG"
+else printf 'ERR op-read-failed\n'; printf '%s FAIL [%s] %s\n' "\$ts" "\$account" "\$ref" >> "\$LOG"; fi
 RESOLVE
 cat > "$DIR/listen.sh" <<LISTEN
 #!/bin/bash
