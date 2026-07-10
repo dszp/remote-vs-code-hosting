@@ -74,8 +74,9 @@ text="Security updates need a reboot (kernel / core libs). Reboot when convenien
 b64() { printf '%s' "$1" | base64 -w0 2>/dev/null || printf '%s' "$1" | base64 | tr -d '\n'; }
 
 # --- 1) Mac desktop attempt (only if the forwarded socket exists == laptop online) ---
-# Wire protocol (deploy mac/notify-bridge-setup.sh): one line of 4 base64 fields —
-# title subtitle message url. No url here: it's an informational "go reboot" nudge.
+# Wire protocol (deploy mac/notify-bridge-setup.sh): one line of base64 fields —
+# title subtitle message url [tmux-session]. No url or session here: it's an
+# informational "go reboot" nudge (a missing 5th field keeps the plain-open click).
 SOCK="$HOME/.notify/mac.sock"
 desktop_ok=0
 if [ -S "$SOCK" ]; then

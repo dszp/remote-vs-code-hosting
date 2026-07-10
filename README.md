@@ -167,8 +167,14 @@ was working in:
 
 Relevant `push.env` keys (all optional): `PUSHOVER_TOKEN`/`PUSHOVER_USER`, `PUSHOVER_DEVICE`
 (comma-separated device names, empty = all), `CODE_SERVER_URL`, `BLINK_URL_KEY`, `BLINK_MOSH_HOST`,
-or `NTFY_URL` for the ntfy alternative (single `Click` link). The Mac desktop notification always
-opens native VS Code via `vscode://`.
+or `NTFY_URL` for the ntfy alternative (single `Click` link).
+
+Clicking the Mac desktop notification focuses the **Ghostty tab** attached to the tmux session
+Claude is in (Ghostty ≥ 1.3.1 AppleScript; matched by the `<session> · <host>` title tmux sets via
+`set-titles`), and **falls back to native VS Code** via `vscode://` when no Ghostty tab has that
+session — so notifications from VS Code-driven sessions behave as before. If the same session is
+attached in both, Ghostty wins. The first Ghostty-targeting click prompts once for Automation
+permission (terminal-notifier → Ghostty).
 
 **C. Laptop helpers.** `config/shell-helpers.sh` (append to `~/.zshrc`) adds `rcode [folder]`
 (open a VM workspace folder in a new Remote-SSH window) and `rpaste` (upload the clipboard image

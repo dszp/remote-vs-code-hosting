@@ -29,18 +29,56 @@ echo ">> writing the listener in $NOTIFY_DIR"
 mkdir -p "$NOTIFY_DIR"
 cat > "$NOTIFY_DIR/show.sh" <<SHOW
 #!/bin/bash
-# Per-connection: read ONE line of 4 space-separated base64 fields and pop a notification.
-#   title subtitle message url
-read -r b_title b_sub b_msg b_url
+# Per-connection: read ONE line of space-separated base64 fields and pop a notification.
+#   title subtitle message url [tmux-session]     (older senders omit the 5th field)
+read -r b_title b_sub b_msg b_url b_sess
 dec() { [ -n "\$1" ] && printf '%s' "\$1" | base64 -D 2>/dev/null || true; }
-title="\$(dec "\$b_title")"; sub="\$(dec "\$b_sub")"; msg="\$(dec "\$b_msg")"; url="\$(dec "\$b_url")"
+title="\$(dec "\$b_title")"; sub="\$(dec "\$b_sub")"; msg="\$(dec "\$b_msg")"; url="\$(dec "\$b_url")"; sess="\$(dec "\$b_sess")"
 [ -z "\$title" ] && title="Claude Code"; [ -z "\$msg" ] && msg="needs your attention"
 args=(-title "\$title" -message "\$msg" -sound Glass -group claude-remote)
 [ -n "\$sub" ] && args+=(-subtitle "\$sub")
-[ -n "\$url" ] && args+=(-open "\$url")
+# Click action: with a tmux session name, click.sh focuses a matching Ghostty tab and
+# only falls back to the url (native VS Code); without one, open the url as before.
+if [ -n "\$sess" ]; then
+  args+=(-execute "$NOTIFY_DIR/click.sh '\$b_url' '\$b_sess'")
+elif [ -n "\$url" ]; then
+  args+=(-open "\$url")
+fi
 "$NOTIFIER" "\${args[@]}" >/dev/null 2>&1 || true
 SHOW
 chmod 700 "$NOTIFY_DIR/show.sh"
+
+echo ">> writing the click handler $NOTIFY_DIR/click.sh"
+cat > "$NOTIFY_DIR/click.sh" <<'CLICK'
+#!/bin/bash
+# Notification click action: focus the Ghostty tab attached to the notifying tmux
+# session, else open the url (native VS Code). args: <b64 url> <b64 session>.
+# The VM's tmux titles every client "<session> · <host>" (set-titles, config/tmux.conf),
+# so a prefix match on "<session> · " finds the right tab — and misses entirely when the
+# session only lives in a VS Code terminal, which is exactly the fallback case. Needs
+# Ghostty >= 1.3.1 for the AppleScript dictionary (a 1.3 preview API — revisit on 1.4).
+dec() { [ -n "$1" ] && printf '%s' "$1" | base64 -D 2>/dev/null || true; }
+url="$(dec "$1")"; sess="$(dec "$2")"
+if [ -n "$sess" ] && pgrep -xiq ghostty; then
+  # pgrep guard: `tell application "Ghostty"` would LAUNCH Ghostty if it weren't running.
+  # If several tabs show the session (stale title after a detach), first match wins.
+  if /usr/bin/osascript - "$sess" >/dev/null 2>&1 <<'OSA'
+on run argv
+	set sessPrefix to (item 1 of argv) & " · "
+	tell application "Ghostty"
+		set matches to every terminal whose name starts with sessPrefix
+		if (count of matches) is 0 then error "no tab attached to that session"
+		focus item 1 of matches
+		activate
+	end tell
+end run
+OSA
+  then exit 0; fi
+fi
+[ -n "$url" ] && open "$url"
+exit 0
+CLICK
+chmod 700 "$NOTIFY_DIR/click.sh"
 
 echo ">> LaunchAgent (socat listener on $MAC_SOCK)"
 PLIST="$HOME/Library/LaunchAgents/com.__MAC_USER__.notify-bridge.plist"
@@ -74,4 +112,9 @@ cat <<EOF
    Then run deploy/85-notify-hook.sh on the VM to install the Claude hook + push config.
    Test (from a Mac-originated VM session):
       printf '%s' '{"message":"bridge test"}' | ~/.claude/notify-remote.sh
+
+   Clicking a notification focuses the Ghostty tab attached to Claude's tmux session
+   (Ghostty >= 1.3.1), falling back to native VS Code (vscode://) when no tab matches.
+   The FIRST such click prompts once for Automation permission — approve
+   terminal-notifier -> Ghostty in System Settings > Privacy & Security > Automation.
 EOF
