@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Install an `op` proxy on the VM with two modes (toggle with `op-mode`):
 #
-#   mac   (default) — resolve secrets on the Mac via a REVERSE channel: your
-#                     Mac->VM SSH connection carries ~/.op-proxy/mac.sock back to a
+#   mac   (default) — resolve secrets on the Mac via a REVERSE channel: each
+#                     Mac->VM SSH connection carries its own ~/.op-proxy/mac-<hash>.sock
+#                     (RemoteForward %C) back to a
 #                     tiny op resolver on the Mac (TouchID). Nothing listens on the
 #                     Mac; nothing is stored on the VM. Works only while you're
 #                     connected from the Mac (the socket exists only then).
@@ -40,9 +41,10 @@ echo ">> config dir $DIR"
 install -d "$DIR"; [ -f "$DIR/mode" ] || echo mac > "$DIR/mode"
 chown -R "$DEV_USER:$DEV_USER" "$DIR"; chmod 700 "$DIR"
 
-echo ">> let sshd unlink stale RemoteForward sockets (needed for the reverse op resolver)"
+echo ">> let sshd unlink stale RemoteForward sockets (op resolver + notify bridge)"
 # For RemoteForward to a unix socket, the SERVER must be allowed to remove a stale
 # socket before rebinding — the client-side StreamLocalBindUnlink does NOT cover this.
+# Shared by every reverse channel: ~/.op-proxy/mac-*.sock and ~/.notify/mac-*.sock.
 cat > /etc/ssh/sshd_config.d/20-rvc-streamlocal.conf <<'SSHD'
 StreamLocalBindUnlink yes
 SSHD
@@ -65,20 +67,35 @@ if [ "$MODE" = "token" ]; then
   exec /usr/local/bin/op.real "$@"
 fi
 
-# ---- mac mode: resolve via the RemoteForward'd socket (TouchID on the Mac) ----
-SOCK="$DIR/mac.sock"
+# ---- mac mode: resolve via the RemoteForward'd sockets (TouchID on the Mac) ----
+# Each Mac SSH connection binds its OWN ~/.op-proxy/mac-<hash>.sock (RemoteForward with
+# ssh's %C token — mac/op-resolver-setup.sh), so try them newest-bind-first: resolution
+# survives any one connection dying (one shared path meant the LAST bind owned it, and
+# its death broke op until a reconnect). Legacy single mac.sock matches the glob too.
+# Pruning: a connect that fails INSTANTLY is a dead forward's leftover file — remove it.
+# A slow failure (e.g. TouchID timeout mid-resolve) happened on a LIVE forward: keep the
+# socket and surface the error instead of retrying, which would re-prompt TouchID.
 # Default account hint for the Mac resolver: an item outside the resolver's default
 # 1Password account only resolves if we tell the Mac which account to read from. Set
 # OP_ACCOUNT (or pass `--account` to read/run) to a sign-in address like foo.1password.com.
 ACCT="${OP_ACCOUNT:-}"
-_resolve() {  # $1 = op:// ref, $2 = account hint (optional) -> prints value or returns 1
-  [ -S "$SOCK" ] || { echo "op(mac): resolver socket missing ($SOCK). Connect from your Mac, or 'op-mode token'." >&2; return 1; }
-  local out
-  if [ -n "${2:-}" ]; then                         # 2-line form: <account>\n<ref>
-    out="$(printf '%s\n%s\n' "$2" "$1" | socat -t120 - UNIX-CONNECT:"$SOCK" 2>/dev/null)" || { echo "op(mac): resolver connect failed" >&2; return 1; }
+_send() {  # $1 = op:// ref, $2 = account hint (may be empty), $3 = socket
+  if [ -n "$2" ]; then                             # 2-line form: <account>\n<ref>
+    printf '%s\n%s\n' "$2" "$1" | socat -t120 - UNIX-CONNECT:"$3" 2>/dev/null
   else                                             # legacy 1-line form: just the ref
-    out="$(printf '%s\n' "$1" | socat -t120 - UNIX-CONNECT:"$SOCK" 2>/dev/null)" || { echo "op(mac): resolver connect failed" >&2; return 1; }
+    printf '%s\n' "$1" | socat -t120 - UNIX-CONNECT:"$3" 2>/dev/null
   fi
+}
+_resolve() {  # $1 = op:// ref, $2 = account hint (optional) -> prints value or returns 1
+  local s out sent=0 t0
+  for s in $(ls -1t "$DIR"/mac*.sock 2>/dev/null); do
+    [ -S "$s" ] || continue
+    t0=$SECONDS
+    if out="$(_send "$1" "${2:-}" "$s")"; then sent=1; break; fi
+    if [ $((SECONDS - t0)) -le 2 ]; then rm -f "$s"; continue; fi
+    echo "op(mac): resolver connect failed" >&2; return 1
+  done
+  [ "$sent" = 1 ] || { echo "op(mac): no live resolver socket ($DIR/mac*.sock). Connect from your Mac, or 'op-mode token'." >&2; return 1; }
   case "$out" in ERR*|'') echo "op(mac): resolve failed for $1 ($out)" >&2; return 1 ;; esac
   printf '%s' "$out"
 }
@@ -146,12 +163,13 @@ chmod 0755 /usr/local/bin/op
 cat > /usr/local/bin/op-mode <<'MODE'
 #!/usr/bin/env bash
 set -euo pipefail
-DIR="$HOME/.op-proxy"; F="$DIR/mode"; TOK="$DIR/service-token"; SOCK="$DIR/mac.sock"
+DIR="$HOME/.op-proxy"; F="$DIR/mode"; TOK="$DIR/service-token"
 cur="$(cat "$F" 2>/dev/null || echo mac)"
 case "${1:-status}" in
   status)
     echo "mode:        $cur"
-    if [ -S "$SOCK" ]; then echo "mac socket:  present (Mac-originated session active)"; else echo "mac socket:  absent (not connected from the Mac)"; fi
+    n=0; for s in "$DIR"/mac*.sock; do [ -S "$s" ] && n=$((n+1)); done
+    if [ "$n" -gt 0 ]; then echo "mac sockets: $n (Mac-originated session(s) active)"; else echo "mac sockets: none (not connected from the Mac)"; fi
     if [ -s "$TOK" ]; then echo "token file:  present"; else echo "token file:  absent"; fi
     ;;
   mac)   echo mac   > "$F"; echo "switched to mac (TouchID via your Mac; needs a Mac-originated session)";;
@@ -170,14 +188,15 @@ cat > "$HOME_DIR/OP-SECRETS.md" <<'DOC'
 `op` here is a **proxy** (`/usr/local/bin/op`). Check state with `op-mode status`.
 
 ## Default: mac mode (TouchID, no secrets on the VM)
-Your Mac->VM SSH connection carries a socket (`~/.op-proxy/mac.sock`) back to a small
-`op` resolver running on your Mac (a launchd agent). When something here runs
+Each Mac->VM SSH connection carries its own socket (`~/.op-proxy/mac-<hash>.sock`) back
+to a small `op` resolver running on your Mac (a launchd agent). When something here runs
 `op read 'op://...'` or `op run --env-file=.env -- wrangler deploy`, the reference is
 resolved **on your Mac with TouchID** and the value returns over the encrypted hop —
-nothing inbound to the Mac, nothing stored here.
+nothing inbound to the Mac, nothing stored here. Any live connection can carry a
+resolve, so one dropped SSH session doesn't break it.
 
-- Works **only while you're connected from the Mac** (the socket exists only then).
-  `op-mode status` shows whether the socket is present.
+- Works **only while you're connected from the Mac** (the sockets exist only then).
+  `op-mode status` shows how many are present.
 - Supported: `op read` and `op run --env-file`. For `op inject`/`op item`/other
   subcommands, use token mode.
 - **Multiple 1Password accounts:** the Mac resolver reads from a default account. To
