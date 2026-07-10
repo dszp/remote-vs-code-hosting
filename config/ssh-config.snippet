@@ -41,20 +41,20 @@ Host __VM_NAME__-cf
 
 # === Optional post-deploy enhancements (see README "Post-deploy enhancements") ===
 
-# 'autodev': a SILENT host for VS Code Remote-SSH that does NOT use the 1Password agent,
-# so VS Code reconnects after the laptop resumes with no TouchID prompt (mac/autodev-key-setup.sh).
+# '__VM_SSH_ALIAS__': a SILENT host for VS Code Remote-SSH that does NOT use the 1Password agent,
+# so VS Code reconnects after the laptop resumes with no TouchID prompt (mac/vm-alias-key-setup.sh).
 # MUST sit ABOVE your 'Host *' block — ssh_config is first-match, and 'IdentityAgent none'
 # has to win over any agent set under 'Host *'.
-Host autodev
+Host __VM_SSH_ALIAS__
   HostName __TAILSCALE_FQDN__
   User __DEV_USER__
   IdentityAgent none
-  IdentityFile ~/.ssh/autodev_ed25519
+  IdentityFile ~/.ssh/__VM_SSH_ALIAS___ed25519
   IdentitiesOnly yes
   UseKeychain yes
 
 # Notify bridge: add this RemoteForward to EVERY host you reach the VM with (__VM_NAME__,
-# autodev, __VM_NAME__-cf) so Claude on the VM can raise a macOS notification on the laptop
+# __VM_SSH_ALIAS__, __VM_NAME__-cf) so Claude on the VM can raise a macOS notification on the laptop
 # (mac/notify-bridge-setup.sh + deploy/85-notify-hook.sh). Sits beside the op-resolver forward.
 #   RemoteForward /home/__DEV_USER__/.notify/mac.sock /Users/__MAC_USER__/.notify/notify.sock
 #   StreamLocalBindUnlink yes

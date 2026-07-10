@@ -35,7 +35,7 @@ msg="$(printf '%s' "$input" | jq -r '.message // empty' 2>/dev/null)"
 dir="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
 [ -z "$msg" ] && msg="Claude needs your attention"
 name=""; [ -n "$dir" ] && name="$(basename "$dir")"
-host="${NOTIFY_SSH_HOST:-autodev}"
+host="${NOTIFY_SSH_HOST:-__VM_SSH_ALIAS__}"
 url=""; [ -n "$dir" ] && url="vscode://vscode-remote/ssh-remote+${host}${dir}"   # desktop: native VS Code
 title="Claude Code · $(hostname -s 2>/dev/null || echo devvm)"
 # tmux session Claude runs in — sent to the Mac (5th wire field) so the click handler

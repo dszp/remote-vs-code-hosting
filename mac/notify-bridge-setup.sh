@@ -102,7 +102,7 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
 cat <<EOF
 
->> ADD this line under EVERY 'Host' you reach the VM with (__VM_NAME__, autodev,
+>> ADD this line under EVERY 'Host' you reach the VM with (__VM_NAME__, __VM_SSH_ALIAS__,
    __VM_NAME__-cf — see config/ssh-config.snippet), alongside the op-resolver forward,
    then reconnect:
 
