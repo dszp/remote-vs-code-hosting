@@ -38,6 +38,10 @@ name=""; [ -n "$dir" ] && name="$(basename "$dir")"
 host="${NOTIFY_SSH_HOST:-autodev}"
 url=""; [ -n "$dir" ] && url="vscode://vscode-remote/ssh-remote+${host}${dir}"   # desktop: native VS Code
 title="Claude Code · $(hostname -s 2>/dev/null || echo devvm)"
+# tmux session Claude runs in — sent to the Mac (5th wire field) so the click handler
+# can focus a matching Ghostty tab (title "<session> · <host>", per config/tmux.conf
+# set-titles) before falling back to the vscode:// url. Reused for the push Terminal link.
+sess=""; [ -n "${TMUX:-}" ] && sess="$(tmux display-message -p '#S' 2>/dev/null)"
 
 SOCK="$HOME/.notify/mac.sock"
 b64() { printf '%s' "$1" | base64 -w0 2>/dev/null || printf '%s' "$1" | base64 | tr -d '\n'; }
@@ -45,7 +49,7 @@ b64() { printf '%s' "$1" | base64 -w0 2>/dev/null || printf '%s' "$1" | base64 |
 # --- desktop attempt ---
 desktop_ok=0
 if [ -S "$SOCK" ]; then
-  line="$(b64 "$title") $(b64 "$name") $(b64 "$msg") $(b64 "$url")"
+  line="$(b64 "$title") $(b64 "$name") $(b64 "$msg") $(b64 "$url") $(b64 "$sess")"
   if printf '%s\n' "$line" | socat -t2 - "UNIX-CONNECT:$SOCK" 2>/dev/null; then
     desktop_ok=1
   fi
@@ -76,15 +80,15 @@ case "$dir" in
   *)       folder="$ws" ;;
 esac
 [ -d "$folder" ] || folder="$ws"
-# Terminal link targets the tmux SESSION Claude runs in (cwd basename can differ — e.g. a
-# git subfolder), falling back to the always-present 'claude' session if none resolves.
-sess=""; [ -n "${TMUX:-}" ] && sess="$(tmux display-message -p '#S' 2>/dev/null)"; [ -n "$sess" ] || sess="claude"
+# Terminal link targets the tmux SESSION Claude runs in (computed above; cwd basename
+# can differ — e.g. a git subfolder), falling back to the always-present 'claude' session.
+psess="${sess:-claude}"
 
 web_url="${csbase}/?folder=${folder}"
 code_url=""; term_url=""
 if [ -n "${BLINK_URL_KEY:-}" ]; then
   code_url="blinkshell://run?key=${BLINK_URL_KEY}&cmd=$(enc "code ${web_url}")"
-  term_url="blinkshell://run?key=${BLINK_URL_KEY}&cmd=$(enc "mosh ${moshhost} \"cs '${sess}'\"")"
+  term_url="blinkshell://run?key=${BLINK_URL_KEY}&cmd=$(enc "mosh ${moshhost} \"cs '${psess}'\"")"
 fi
 
 mode="${NOTIFY_PUSH_MODE:-fallback}"   # off | always | fallback
