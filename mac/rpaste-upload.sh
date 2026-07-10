@@ -7,7 +7,7 @@
 # Runs with no terminal, so it reports via a macOS notification. Workflow:
 #   screenshot -> press hotkey -> ⌘V into Claude on the VM.
 export PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-HOST="${RCODE_HOST:-autodev}"
+HOST="${RCODE_HOST:-__VM_SSH_ALIAS__}"
 DIR="${RPASTE_DIR:-/home/__DEV_USER__/.cache/pastes}"
 NAME="paste-$(date +%Y%m%d-%H%M%S).png"
 NOTIFIER="/opt/homebrew/bin/terminal-notifier"

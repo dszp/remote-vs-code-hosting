@@ -129,16 +129,16 @@ they're marked **[manual]**.
 
 Quality-of-life layers added after the core is working. Each is independent.
 
-**A. Silent VS Code host (`autodev`) — no TouchID on resume.** The 1Password SSH agent
+**A. Silent VS Code host (`__VM_SSH_ALIAS__`) — no TouchID on resume.** The 1Password SSH agent
 re-locks on sleep, so VS Code Remote-SSH re-prompts for TouchID on every reconnect. A
 dedicated key whose passphrase lives in the macOS login keychain connects silently, while
 `ssh __VM_NAME__` keeps prompting as before.
 ```bash
-./mac/autodev-key-setup.sh          # gen key, keychain, 1Password backup, install pubkey
+./mac/vm-alias-key-setup.sh          # gen key, keychain, 1Password backup, install pubkey
 ```
-Then add the printed `Host autodev` block to `~/.ssh/config` **above `Host *`** (first-match;
-`IdentityAgent none` must win). Connect VS Code to `autodev`. Trade-off: anyone with your
-*unlocked* Mac can `ssh autodev` with no challenge — that is the point. Keep the internet-facing
+Then add the printed `Host __VM_SSH_ALIAS__` block to `~/.ssh/config` **above `Host *`** (first-match;
+`IdentityAgent none` must win). Connect VS Code to `__VM_SSH_ALIAS__`. Trade-off: anyone with your
+*unlocked* Mac can `ssh __VM_SSH_ALIAS__` with no challenge — that is the point. Keep the internet-facing
 `__VM_NAME__-cf` on the 1Password agent (TouchID) instead.
 
 **B. Remote attention notifications.** Make Claude on the VM raise a macOS notification on the
@@ -183,7 +183,7 @@ sends a local Mac path). For a screenshot hotkey, bind `mac/rpaste-upload.sh` in
 (e.g. BetterTouchTool). **[manual]** A Finder **Quick Action** (Automator → "Quick Action" receiving
 folders → Run Shell Script) makes a right-click "Open in VS Code Remote":
 ```zsh
-host="autodev"   # or __VM_NAME__-cf for the Cloudflare fallback
+host="__VM_SSH_ALIAS__"   # or __VM_NAME__-cf for the Cloudflare fallback
 cli="/usr/local/bin/code"; [ -x "$cli" ] || cli="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
 for f in "$@"; do "$cli" --new-window --folder-uri "vscode-remote://ssh-remote+$host/home/__DEV_USER__/workspace/${f:t}"; done
 ```
@@ -379,6 +379,7 @@ Fill these in (all live in `env.example`; some also appear in `config/ssh-config
 | `__CODE_HOSTNAME__` | Public hostname for browser code-server | `code.example.com` |
 | `__CF_ACCOUNT__` | Cloudflare account name | `Personal` |
 | `__VM_NAME__` | VM name / Tailscale node / SSH host alias / tunnel name | `dev` |
+| `__VM_SSH_ALIAS__` | Silent Remote-SSH host alias (dedicated no-TouchID key, `VM_ALIAS_HOST`) | `dev-auto` |
 | `__DEV_USER__` | Login user on the VM | `dev` |
 | `__MAC_USER__` | Your macOS username (op resolver paths/label) | `alex` |
 | `__PVE_HOST__` | Proxmox host (SSH target for VM creation) | `pve` |
