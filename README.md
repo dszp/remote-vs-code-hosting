@@ -107,8 +107,17 @@ they're marked **[manual]**.
    ```bash
    ./deploy/run-remote.sh __VM_NAME__ deploy/60-session-boot.sh DEV_USER=__DEV_USER__  # recreate 'claude' session on boot
    ./deploy/run-remote.sh __VM_NAME__ deploy/65-auto-attach.sh  DEV_USER=__DEV_USER__  # interactive shells auto-enter a folder-named session
+   ./deploy/run-remote.sh __VM_NAME__ deploy/66-code-ipc.sh     DEV_USER=__DEV_USER__  # `code` self-heals across Remote-SSH reconnects
    ./deploy/run-remote.sh __VM_NAME__ deploy/70-cs-shortcut.sh                   # install the `cs` helper on PATH
    ```
+
+   `66-code-ipc.sh` installs a VM-side `code` wrapper: on a Remote-SSH reconnect VS Code
+   mints a **new** IPC socket and abandons the old one *without deleting the file*, so a
+   shell that outlived the reconnect keeps pointing at a dead socket and `code .` fails with
+   `connect ENOENT .../vscode-ipc-*.sock`. The wrapper repoints `$VSCODE_IPC_HOOK_CLI` at the
+   newest socket that actually accepts a connection, only when you run `code`. It complements
+   the `update-environment VSCODE_IPC_HOOK_CLI` tmux setting (which only covers *new* panes).
+   This is the VM-side `code`; the Mac-side `rcode` (below) is a separate, unaffected path.
 
 ## Post-deploy enhancements (optional)
 
