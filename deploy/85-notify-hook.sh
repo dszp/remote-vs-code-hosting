@@ -43,17 +43,25 @@ title="Claude Code · $(hostname -s 2>/dev/null || echo devvm)"
 # set-titles) before falling back to the vscode:// url. Reused for the push Terminal link.
 sess=""; [ -n "${TMUX:-}" ] && sess="$(tmux display-message -p '#S' 2>/dev/null)"
 
-SOCK="$HOME/.notify/mac.sock"
 b64() { printf '%s' "$1" | base64 -w0 2>/dev/null || printf '%s' "$1" | base64 | tr -d '\n'; }
 
 # --- desktop attempt ---
+# Each Mac SSH connection binds its OWN forwarded socket ~/.notify/mac-<hash>.sock
+# (RemoteForward with ssh's %C token — config/ssh-config.snippet), so try them
+# newest-bind-first and deliver via the first live one: the bridge survives any one
+# connection dying, which the old single shared mac.sock did not (last bind wins the
+# path; when THAT connection died, delivery broke even with other connections alive).
+# A refused connect == a dead forward left the file behind: prune it. The legacy
+# mac.sock still matches the glob, so unmigrated ssh configs keep working.
 desktop_ok=0
-if [ -S "$SOCK" ]; then
-  line="$(b64 "$title") $(b64 "$name") $(b64 "$msg") $(b64 "$url") $(b64 "$sess")"
-  if printf '%s\n' "$line" | socat -t2 - "UNIX-CONNECT:$SOCK" 2>/dev/null; then
-    desktop_ok=1
+line="$(b64 "$title") $(b64 "$name") $(b64 "$msg") $(b64 "$url") $(b64 "$sess")"
+for s in $(ls -1t "$HOME/.notify/"mac*.sock 2>/dev/null); do
+  [ -S "$s" ] || continue
+  if printf '%s\n' "$line" | socat -t2 - "UNIX-CONNECT:$s" 2>/dev/null; then
+    desktop_ok=1; break
   fi
-fi
+  rm -f "$s"
+done
 
 # --- push (optional / dormant until configured) ---
 ENV_FILE="$HOME/.notify/push.env"
