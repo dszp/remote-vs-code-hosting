@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Mac side of the reverse op resolver. Run ON YOUR MAC. Pairs with deploy/80-op-proxy.sh
-# on the VM: your Mac->VM SSH connection forwards the VM's ~/.op-proxy/mac.sock back to a
+# on the VM: each Mac->VM SSH connection forwards its own VM socket ~/.op-proxy/mac-<hash>.sock
+# (RemoteForward %C) back to a
 # small `op read`-only resolver here, so the VM resolves secrets via TouchID with NO
 # inbound to the Mac (works with shields-up + the sandboxed App Store Tailscale).
 #
@@ -10,7 +11,9 @@ set -euo pipefail
 
 OP_ACCOUNT="${OP_ACCOUNT:-__OP_ACCOUNT__}"   # which 1Password account (you have several)
 SSH_HOST="${SSH_HOST:-__VM_NAME__}"                    # the ~/.ssh/config Host to add RemoteForward to
-VM_SOCK="${VM_SOCK:-/home/__DEV_USER__/.op-proxy/mac.sock}"   # socket path ON THE VM (matches DEV_USER there)
+# %C = ssh's per-host connection hash: each host alias binds its OWN socket on the VM and
+# the VM's op proxy tries every mac-*.sock, so one dead connection can't break resolution.
+VM_SOCK="${VM_SOCK:-/home/__DEV_USER__/.op-proxy/mac-%C.sock}"   # socket path ON THE VM (matches DEV_USER there)
 DIR="$HOME/.op-resolver"
 MAC_SOCK="$DIR/resolver.sock"
 

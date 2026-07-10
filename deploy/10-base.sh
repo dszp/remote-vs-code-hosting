@@ -39,9 +39,6 @@ install -m 0644 /dev/stdin /etc/ssh/sshd_config.d/10-rvc-hardening.conf <<'SSHD'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin prohibit-password
-# Let a new RemoteForward bind replace a stale unix socket left by a dead connection
-# (the notify bridge's per-connection ~/.notify/mac-*.sock — see deploy/85).
-StreamLocalBindUnlink yes
 SSHD
 sshd -t && systemctl reload sshd
 echo "   (left a working key-based session? good. test a NEW ssh session before closing this one.)"
