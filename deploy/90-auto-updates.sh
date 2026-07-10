@@ -53,8 +53,8 @@ log "writing $HOME_DIR/.notify/reboot-check.sh"
 cat > "$HOME_DIR/.notify/reboot-check.sh" <<'CHK'
 #!/bin/bash
 # Notify when a reboot is pending after security updates. Mirrors the Claude attention hook:
-# try the Mac desktop notifier first over the SSH RemoteForward socket (~/.notify/mac.sock —
-# present only while the laptop is connected, so a failed attempt == laptop offline), then
+# try the Mac desktop notifier first over the SSH RemoteForward sockets (~/.notify/mac*.sock —
+# present only while the laptop is connected, so all-failed == laptop offline), then
 # fall back to a push (Pushover/ntfy) per NOTIFY_PUSH_MODE. Reuses ~/.notify/push.env. Runs
 # daily as the dev user from reboot-notify.timer. Silent when no reboot is needed.
 set -u
@@ -73,18 +73,21 @@ text="Security updates need a reboot (kernel / core libs). Reboot when convenien
 
 b64() { printf '%s' "$1" | base64 -w0 2>/dev/null || printf '%s' "$1" | base64 | tr -d '\n'; }
 
-# --- 1) Mac desktop attempt (only if the forwarded socket exists == laptop online) ---
+# --- 1) Mac desktop attempt (forwarded sockets exist only while the laptop is on) ---
 # Wire protocol (deploy mac/notify-bridge-setup.sh): one line of base64 fields —
 # title subtitle message url [tmux-session]. No url or session here: it's an
 # informational "go reboot" nudge (a missing 5th field keeps the plain-open click).
-SOCK="$HOME/.notify/mac.sock"
+# Per-connection sockets mac-<hash>.sock, newest first, prune dead ones — same loop
+# as ~/.claude/notify-remote.sh (deploy/85); legacy mac.sock matches the glob too.
 desktop_ok=0
-if [ -S "$SOCK" ]; then
-  line="$(b64 "$title") $(b64 "security updates") $(b64 "$text") $(b64 "")"
-  if printf '%s\n' "$line" | socat -t2 - "UNIX-CONNECT:$SOCK" 2>/dev/null; then
-    desktop_ok=1
+line="$(b64 "$title") $(b64 "security updates") $(b64 "$text") $(b64 "")"
+for s in $(ls -1t "$HOME/.notify/"mac*.sock 2>/dev/null); do
+  [ -S "$s" ] || continue
+  if printf '%s\n' "$line" | socat -t2 - "UNIX-CONNECT:$s" 2>/dev/null; then
+    desktop_ok=1; break
   fi
-fi
+  rm -f "$s"
+done
 
 # --- 2) push fallback per NOTIFY_PUSH_MODE: off | always | fallback (default) ---
 mode="${NOTIFY_PUSH_MODE:-fallback}"

@@ -18,7 +18,9 @@ SSH_HOST="${SSH_HOST:-__VM_NAME__}"        # the ~/.ssh/config Host(s) to Remote
 DEV_USER="${DEV_USER:-__DEV_USER__}"           # login user on the VM (its socket path)
 NOTIFY_DIR="${NOTIFY_DIR:-$HOME/.notify}"
 MAC_SOCK="$NOTIFY_DIR/notify.sock"
-VM_SOCK="/home/$DEV_USER/.notify/mac.sock"
+# %C = ssh's per-host connection hash -> each host alias binds its OWN socket on the VM,
+# and the VM hook tries every mac-*.sock, so one dead connection can't kill the bridge.
+VM_SOCK="/home/$DEV_USER/.notify/mac-%C.sock"
 
 command -v terminal-notifier >/dev/null || brew install terminal-notifier
 command -v socat >/dev/null || brew install socat

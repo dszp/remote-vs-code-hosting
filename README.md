@@ -148,7 +148,9 @@ connected, so a failed desktop delivery *is* "offline").
 ./mac/notify-bridge-setup.sh                                   # laptop: socat listener + LaunchAgent
 ./deploy/run-remote.sh __VM_NAME__ deploy/85-notify-hook.sh DEV_USER=__DEV_USER__   # VM: hook + push template
 ```
-Add the `RemoteForward` for `~/.notify/mac.sock` to each VM host (see `config/ssh-config.snippet`).
+Add the `RemoteForward` for `~/.notify/mac-%C.sock` to each VM host (see `config/ssh-config.snippet`
+— `%C` gives each host alias its own socket; the VM hook tries every `mac-*.sock`, newest first,
+so notifications survive any single SSH connection dying).
 Push is dormant until you fill `~/.notify/push.env` on the VM; `NOTIFY_PUSH_MODE` = `off|always|fallback`.
 
 The Pushover push is an **html message with up to three tappable links** for the folder Claude
