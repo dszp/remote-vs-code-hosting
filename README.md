@@ -22,6 +22,12 @@ zone — SSH at `__SSH_HOSTNAME__`, browser code-server at `__CODE_HOSTNAME__`.
 
 > Keep environment-specific details in a local, gitignored file (e.g. `PLAN.local.md`) — never in tracked files.
 
+## Architecture at a glance
+
+<a href="docs/architecture.svg"><img src="docs/architecture.png" alt="Clients → transport (Tailscale primary / Cloudflare secondary) → AlmaLinux VM on Proxmox" width="900"></a>
+
+*Click the diagram for the full-resolution vector ([SVG](docs/architecture.svg)); editable source: [`docs/architecture.drawio`](docs/architecture.drawio). Read it left→right: **clients** reach the VM over one of two **transports** (green = Tailscale, primary; orange = Cloudflare, secondary — no public inbound port either way); inside the VM the red **persistence** layer (`tmux` + linger) is what keeps Claude Code alive across laptop-off.*
+
 ## Secrets: how this repo stays clean
 
 All credentials are resolved on the **laptop** via the 1Password CLI (`op`, TouchID) and
