@@ -206,6 +206,48 @@ transport). Separately, Claude Code now runs `"tui": "fullscreen"` with the mous
 should own the mouse at a time — toggle tmux's with **`Ctrl-b m`** (the status bar shows
 **MOUSE ON/OFF**).
 
+## Upgrading code-server (new releases)
+
+code-server is installed by `deploy/50-code-server.sh` via the upstream
+`https://code-server.dev/install.sh`, which on AlmaLinux lands the **RPM** package. Two
+consequences for upgrades:
+
+- **The deploy script won't upgrade in place.** Its install line is guarded
+  (`command -v code-server >/dev/null 2>&1 || … install.sh | sh`), so re-running it on a
+  host that already has code-server is a no-op — it never touches the version.
+- **`dnf-automatic` won't upgrade it either.** The RPM is installed standalone (not from a
+  dnf repo), so the daily security-update timer (**enhancement E**) leaves it alone.
+
+So bumping to a new release (e.g. when GitHub announces one) is a deliberate manual step.
+Because it's an RPM install, pin the exact release and swap the package, then restart the
+per-user service:
+
+```bash
+# 1. Upgrade to a specific release — note the asset name is `-amd64.rpm`
+#    (the `-1.x86_64` you see in `rpm -q` is the installed NVR, not the download filename).
+sudo rpm -U https://github.com/coder/code-server/releases/download/v4.127.0/code-server-4.127.0-amd64.rpm
+
+# 2. Restart the service (config.yaml + the systemd unit are untouched by the swap)
+sudo systemctl restart code-server@__DEV_USER__
+
+# 3. Verify
+code-server --version         # -> 4.127.0 … with Code 1.127.0
+systemctl is-active code-server@__DEV_USER__
+```
+
+The restart briefly drops live browser sessions; they reconnect on reload. Nothing in
+`~/.config/code-server/config.yaml` (loopback bind + password auth) needs re-applying.
+
+**Rollback** if a release misbehaves — downgrade to the prior RPM and restart:
+```bash
+sudo rpm -U --oldpackage https://github.com/coder/code-server/releases/download/v4.126.0/code-server-4.126.0-amd64.rpm
+sudo systemctl restart code-server@__DEV_USER__
+```
+
+For a fresh host, `50-code-server.sh` still installs current-latest via `install.sh` — the
+version isn't pinned in the repo, so a brand-new box and an upgraded box can differ. Run the
+`rpm -U` above afterward if you need a new host on an exact version.
+
 ## Cheatsheet
 
 Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).

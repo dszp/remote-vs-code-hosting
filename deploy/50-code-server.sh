@@ -14,6 +14,9 @@ CODE_SERVER_PORT="${CODE_SERVER_PORT:-8080}"
 CODE_SERVER_PASSWORD="${CODE_SERVER_PASSWORD:?export CODE_SERVER_PASSWORD via op — adds a layer on top of Cloudflare Access}"
 
 echo ">> install code-server"
+# Guarded: installs current-latest only if absent. Re-running never upgrades an existing
+# install, and the RPM isn't in a dnf repo so dnf-automatic won't either — bumping to a new
+# release is a manual `rpm -U` of the pinned asset. See README "Upgrading code-server".
 command -v code-server >/dev/null 2>&1 || curl -fsSL https://code-server.dev/install.sh | sh
 
 echo ">> write config (loopback bind, password auth) for $DEV_USER"
