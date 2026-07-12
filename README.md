@@ -167,9 +167,11 @@ connected, so a failed desktop delivery *is* "offline").
 ./mac/notify-bridge-setup.sh                                   # laptop: socat listener + LaunchAgent
 ./deploy/run-remote.sh __VM_NAME__ deploy/85-notify-hook.sh DEV_USER=__DEV_USER__   # VM: hook + push template
 ```
-Add the `RemoteForward` for `~/.notify/mac-%C.sock` to each VM host (see `config/ssh-config.snippet`
-— `%C` gives each host alias its own socket; the VM hook tries every `mac-*.sock`, newest first,
-so notifications survive any single SSH connection dying).
+Add the `RemoteForward` for `~/.notify/mac-%n.sock` to each VM host (see `config/ssh-config.snippet`
+— `%n` (the alias as typed) gives each host alias its own socket; the VM hook tries every
+`mac-*.sock`, newest first, so notifications survive any single SSH connection dying. Use `%n`,
+not `%C`: `%C` hashes the resolved HostName, so aliases sharing one — like `__VM_SSH_ALIAS__` and
+`__VM_NAME__` — would collide on a single socket).
 Push is dormant until you fill `~/.notify/push.env` on the VM; `NOTIFY_PUSH_MODE` = `off|always|fallback`.
 
 The Pushover push is an **html message with up to three tappable links** for the folder Claude
@@ -248,8 +250,8 @@ transport). Separately, Claude Code now runs `"tui": "fullscreen"` with the mous
 should own the mouse at a time — toggle tmux's with **`Ctrl-b m`** (the status bar shows
 **MOUSE ON/OFF**).
 
-**G. Swap safety net + high-swap alert.** The VM ships with **no swap**; a stack of concurrent
-Claude Code sessions can exhaust RAM, at which point the kernel OOM-killer takes down the user
+**G. Swap safety net + high-swap alert.** The VM ships with **no swap**; on 2026-07-12 a stack
+of concurrent Claude Code sessions exhausted RAM and the kernel OOM-killer took down the user
 `systemd` + tmux server, dropping every session. Two parts fix it: `10-base.sh` provisions a
 swapfile (sized to RAM — see step 2) so pressure **pages** instead of killing, and this step adds
 an **early-warning alert** so you can shed load before swap fills. Reuses the **B** notify bridge —

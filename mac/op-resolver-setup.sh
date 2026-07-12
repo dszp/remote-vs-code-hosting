@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Mac side of the reverse op resolver. Run ON YOUR MAC. Pairs with deploy/80-op-proxy.sh
-# on the VM: each Mac->VM SSH connection forwards its own VM socket ~/.op-proxy/mac-<hash>.sock
-# (RemoteForward %C) back to a
+# on the VM: each Mac->VM SSH connection forwards its own VM socket ~/.op-proxy/mac-<alias>.sock
+# (RemoteForward %n) back to a
 # small `op read`-only resolver here, so the VM resolves secrets via TouchID with NO
 # inbound to the Mac (works with shields-up + the sandboxed App Store Tailscale).
 #
@@ -11,9 +11,12 @@ set -euo pipefail
 
 OP_ACCOUNT="${OP_ACCOUNT:-__OP_ACCOUNT__}"   # which 1Password account (you have several)
 SSH_HOST="${SSH_HOST:-__VM_NAME__}"                    # the ~/.ssh/config Host to add RemoteForward to
-# %C = ssh's per-host connection hash: each host alias binds its OWN socket on the VM and
-# the VM's op proxy tries every mac-*.sock, so one dead connection can't break resolution.
-VM_SOCK="${VM_SOCK:-/home/__DEV_USER__/.op-proxy/mac-%C.sock}"   # socket path ON THE VM (matches DEV_USER there)
+# %n = the host alias exactly as typed on the command line (expanded by ssh). Each alias
+# binds its OWN socket on the VM, and the VM's op proxy tries every mac-*.sock, so one dead
+# connection can't break resolution. Use %n, NOT %C: %C hashes the resolved HostName+port+user,
+# so aliases that share a HostName (e.g. __VM_SSH_ALIAS__ and __VM_NAME__ both point at the same IP) collide
+# on ONE socket — the last bind wins and its death breaks op until a full reconnect.
+VM_SOCK="${VM_SOCK:-/home/__DEV_USER__/.op-proxy/mac-%n.sock}"   # socket path ON THE VM (matches DEV_USER there)
 DIR="$HOME/.op-resolver"
 MAC_SOCK="$DIR/resolver.sock"
 

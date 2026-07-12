@@ -46,11 +46,12 @@ sess=""; [ -n "${TMUX:-}" ] && sess="$(tmux display-message -p '#S' 2>/dev/null)
 b64() { printf '%s' "$1" | base64 -w0 2>/dev/null || printf '%s' "$1" | base64 | tr -d '\n'; }
 
 # --- desktop attempt ---
-# Each Mac SSH connection binds its OWN forwarded socket ~/.notify/mac-<hash>.sock
-# (RemoteForward with ssh's %C token — config/ssh-config.snippet), so try them
-# newest-bind-first and deliver via the first live one: the bridge survives any one
-# connection dying, which the old single shared mac.sock did not (last bind wins the
-# path; when THAT connection died, delivery broke even with other connections alive).
+# Each Mac SSH connection binds its OWN forwarded socket ~/.notify/mac-<alias>.sock
+# (RemoteForward with ssh's %n token — the alias as typed — config/ssh-config.snippet),
+# so try them newest-bind-first and deliver via the first live one: the bridge survives any
+# one connection dying, which neither the old single shared mac.sock NOR %C did (last bind
+# wins the path; when THAT connection died, delivery broke even with other connections
+# alive — and %C, hashing HostName, collides across aliases that share one like __VM_SSH_ALIAS__/__VM_NAME__).
 # A refused connect == a dead forward left the file behind: prune it. The legacy
 # mac.sock still matches the glob, so unmigrated ssh configs keep working.
 desktop_ok=0
