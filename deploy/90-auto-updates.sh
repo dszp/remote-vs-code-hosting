@@ -58,9 +58,13 @@ cat > "$HOME_DIR/.notify/reboot-check.sh" <<'CHK'
 # fall back to a push (Pushover/ntfy) per NOTIFY_PUSH_MODE. Reuses ~/.notify/push.env. Runs
 # daily as the dev user from reboot-notify.timer. Silent when no reboot is needed.
 set -u
+# An explicit NOTIFY_PUSH_MODE from the environment (a forced test, or an Environment=
+# line in the unit) must win over push.env — capture it before sourcing, restore after.
+_mode_override="${NOTIFY_PUSH_MODE:-}"
 ENV_FILE="$HOME/.notify/push.env"
 # shellcheck disable=SC1090
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"
+[ -n "$_mode_override" ] && NOTIFY_PUSH_MODE="$_mode_override"
 
 # dnf needs-restarting -r: exit 1 = reboot recommended (kernel/core libs/systemd), 0 = fine.
 dnf needs-restarting -r >/dev/null 2>&1; rc=$?

@@ -35,9 +35,13 @@ cat > "$HOME_DIR/.notify/swap-check.sh" <<'CHK'
 # REMIND_SECS), and re-arm only after it falls below REARM_PCT — hysteresis so a value
 # hovering at the line can't flap. State in ~/.notify/swap-check.state ("high|ok <epoch>").
 set -u
+# An explicit NOTIFY_PUSH_MODE from the environment (a forced test, or an Environment=
+# line in the unit) must win over push.env — capture it before sourcing, restore after.
+_mode_override="${NOTIFY_PUSH_MODE:-}"
 ENV_FILE="$HOME/.notify/push.env"
 # shellcheck disable=SC1090
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"
+[ -n "$_mode_override" ] && NOTIFY_PUSH_MODE="$_mode_override"
 
 HIGH_PCT="${SWAP_HIGH_PCT:-50}"           # alert when used% >= this
 REARM_PCT="${SWAP_REARM_PCT:-25}"         # clear alert state when used% drops below this
