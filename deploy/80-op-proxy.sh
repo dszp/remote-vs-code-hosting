@@ -2,8 +2,8 @@
 # Install an `op` proxy on the VM with two modes (toggle with `op-mode`):
 #
 #   mac   (default) — resolve secrets on the Mac via a REVERSE channel: each
-#                     Mac->VM SSH connection carries its own ~/.op-proxy/mac-<hash>.sock
-#                     (RemoteForward %C) back to a
+#                     Mac->VM SSH connection carries its own ~/.op-proxy/mac-<alias>.sock
+#                     (RemoteForward %n) back to a
 #                     tiny op resolver on the Mac (TouchID). Nothing listens on the
 #                     Mac; nothing is stored on the VM. Works only while you're
 #                     connected from the Mac (the socket exists only then).
@@ -68,10 +68,12 @@ if [ "$MODE" = "token" ]; then
 fi
 
 # ---- mac mode: resolve via the RemoteForward'd sockets (TouchID on the Mac) ----
-# Each Mac SSH connection binds its OWN ~/.op-proxy/mac-<hash>.sock (RemoteForward with
-# ssh's %C token — mac/op-resolver-setup.sh), so try them newest-bind-first: resolution
-# survives any one connection dying (one shared path meant the LAST bind owned it, and
-# its death broke op until a reconnect). Legacy single mac.sock matches the glob too.
+# Each Mac SSH connection binds its OWN ~/.op-proxy/mac-<alias>.sock (RemoteForward with
+# ssh's %n token — the alias as typed — mac/op-resolver-setup.sh), so try them
+# newest-bind-first: resolution survives any one connection dying (a shared path means the
+# LAST bind owns it, and its death breaks op until a reconnect — the failure mode of both
+# the old single mac.sock AND of %C, which hashes HostName and so collides across aliases
+# that share one, like __VM_SSH_ALIAS__ and __VM_NAME__). Legacy single mac.sock matches the glob too.
 # Pruning: a connect that fails INSTANTLY is a dead forward's leftover file — remove it.
 # A slow failure (e.g. TouchID timeout mid-resolve) happened on a LIVE forward: keep the
 # socket and surface the error instead of retrying, which would re-prompt TouchID.

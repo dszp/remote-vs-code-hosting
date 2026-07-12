@@ -56,9 +56,11 @@ Host __VM_SSH_ALIAS__
 # Notify bridge: add this RemoteForward to EVERY host you reach the VM with (__VM_NAME__,
 # __VM_SSH_ALIAS__, __VM_NAME__-cf) so Claude on the VM can raise a macOS notification on the laptop
 # (mac/notify-bridge-setup.sh + deploy/85-notify-hook.sh). Sits beside the op-resolver forward.
-# %C (a per-host connection hash, expanded by ssh) gives each host alias its OWN socket on
+# %n (the host alias as typed, expanded by ssh) gives each host alias its OWN socket on
 # the VM, so notifications keep flowing when any one connection dies — the VM hook tries
-# every mac-*.sock. sshd-side `StreamLocalBindUnlink yes` (deploy/10-base.sh) lets a
-# reconnect re-bind over a stale socket left by a crashed connection.
-#   RemoteForward /home/__DEV_USER__/.notify/mac-%C.sock /Users/__MAC_USER__/.notify/notify.sock
+# every mac-*.sock. Use %n, NOT %C: %C hashes the resolved HostName+port+user, so aliases
+# that share a HostName (__VM_SSH_ALIAS__ and __VM_NAME__ both point at the same IP) collide on one
+# socket. sshd-side `StreamLocalBindUnlink yes` (deploy/10-base.sh) lets a reconnect
+# re-bind over a stale socket left by a crashed connection.
+#   RemoteForward /home/__DEV_USER__/.notify/mac-%n.sock /Users/__MAC_USER__/.notify/notify.sock
 #   StreamLocalBindUnlink yes
