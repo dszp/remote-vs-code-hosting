@@ -64,3 +64,22 @@ Host __VM_SSH_ALIAS__
 # re-bind over a stale socket left by a crashed connection.
 #   RemoteForward /home/__DEV_USER__/.notify/mac-%n.sock /Users/__MAC_USER__/.notify/notify.sock
 #   StreamLocalBindUnlink yes
+
+# Always-on forward carrier (mac/forward-agent-setup.sh): a LaunchAgent holds `ssh -N
+# __VM_NAME__-fwd` open so the op resolver + notify bridge have a LIVE socket whenever the Mac
+# is online — a VS Code Remote-SSH window does NOT hold a forward. Dedicated alias -> %n ->
+# mac-__VM_NAME__-fwd.sock, distinct from the interactive sockets. MUST sit above 'Host *'.
+# Host __VM_NAME__-fwd
+#   HostName __TAILSCALE_FQDN__
+#   User __DEV_USER__
+#   IdentityAgent none
+#   IdentityFile ~/.ssh/__VM_SSH_ALIAS___ed25519
+#   IdentitiesOnly yes
+#   UseKeychain yes
+#   ConnectTimeout 15
+#   ServerAliveInterval 30
+#   ServerAliveCountMax 3
+#   ExitOnForwardFailure yes
+#   RemoteForward /home/__DEV_USER__/.op-proxy/mac-%n.sock /Users/__MAC_USER__/.op-resolver/resolver.sock
+#   RemoteForward /home/__DEV_USER__/.notify/mac-%n.sock /Users/__MAC_USER__/.notify/notify.sock
+#   StreamLocalBindUnlink yes
