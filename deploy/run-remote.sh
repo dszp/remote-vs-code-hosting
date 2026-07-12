@@ -51,5 +51,17 @@ esac
 # -t gives the remote a tty for any sudo password prompt.
 ssh_opts=(-t -o StrictHostKeyChecking=accept-new)
 [ -n "${SSH_JUMP:-}" ] && { ssh_opts+=(-J "$SSH_JUMP"); log "via jump $SSH_JUMP"; }
-{ printf '%s' "$preamble"; cat "$SCRIPT"; } | ssh "${ssh_opts[@]}" "$TARGET" "$runner"
+# A script that does `source "$(dirname "$0")/lib.sh"` can't find lib.sh over stdin — piped
+# to `bash -s`, $0 is "bash", so it looks for ./lib.sh on the remote and dies. Inline lib.sh
+# ahead of the body and turn the source line into a no-op. lib.sh is generic helpers with NO
+# secrets, so streaming it keeps the "nothing on the remote disk / process list" guarantee.
+emit_body() {
+  if grep -qE '^[[:space:]]*(source|\.)[[:space:]].*lib\.sh' "$SCRIPT"; then
+    cat deploy/lib.sh
+    sed -E 's@^[[:space:]]*(source|\.)[[:space:]].*lib\.sh.*@: # lib.sh inlined by run-remote.sh@' "$SCRIPT"
+  else
+    cat "$SCRIPT"
+  fi
+}
+{ printf '%s' "$preamble"; emit_body; } | ssh "${ssh_opts[@]}" "$TARGET" "$runner"
 ok "finished $SCRIPT on $TARGET"
