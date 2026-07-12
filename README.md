@@ -268,6 +268,24 @@ Mac desktop notification when connected, push (Pushover/ntfy) when offline.
 Test without waiting for real pressure (forces one send, then clears state):
 `sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ SWAP_HIGH_PCT=0 NOTIFY_PUSH_MODE=always /home/__DEV_USER__/.notify/swap-check.sh; rm -f /home/__DEV_USER__/.notify/swap-check.state`
 
+**H. Always-on forward carrier for `op` + notify.** The op proxy (**mac** mode) and the notify
+bridge (**B**) only work while a *live* Mac→VM SSH connection holds their `RemoteForward`'d
+sockets open. A VS Code Remote-SSH window does **not** count — reloading/reconnecting it reuses
+the multiplexed connection without re-binding a forward, so `op read` fails with "no live resolver
+socket" while notify silently falls back to push. This installs a dedicated LaunchAgent
+(`com.__MAC_USER__.__VM_NAME__-forward`) that holds `ssh -N __VM_NAME__-fwd` open, so both have a live socket
+whenever the Mac is online — independent of VS Code, terminals, or mosh.
+```bash
+./mac/forward-agent-setup.sh        # LaunchAgent + the printed 'Host __VM_NAME__-fwd' block
+```
+Add the printed `Host __VM_NAME__-fwd` block **above `Host *`** (silent `__VM_SSH_ALIAS__` key, so no TouchID).
+It's a *dedicated* alias, so `%n` → `mac-__VM_NAME__-fwd.sock`, distinct from your interactive
+`__VM_SSH_ALIAS__`/`__VM_NAME__` sockets (no collision). launchd `KeepAlive` + `ServerAliveInterval` self-heal:
+a dropped link (sleep, network change) exits `ssh` and launchd relaunches it; on resume it rebinds.
+It rides Tailscale like the other silent hosts — when Tailscale is fully down it just falls back
+(`op-mode token` / Pushover) and reconnects when Tailscale returns. Verify: `launchctl list | grep
+__VM_NAME__-forward` (col 1 = pid) and `op-mode status` on the VM (`mac sockets` ≥ 1 with the Mac up).
+
 ## Upgrading code-server (new releases)
 
 code-server is installed by `deploy/50-code-server.sh` via the upstream
