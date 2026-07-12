@@ -10,6 +10,12 @@
 # tab vs the running Claude) lands on <folder>-2 instead of mirroring/fighting it.
 # Reach the busy session deliberately with `cs <folder>` (forces it, -D).
 #
+# One reconnect wrinkle this creates: after a long laptop-off period VS Code REVIVES the
+# dead terminal processes, and a revived shell re-runs this block and grabs the base
+# session before the Claude-extension terminal does -> Claude lands on <folder>-2. The
+# VS Code half of the fix lives in deploy/67-vscode-terminal-settings.sh
+# (persistentSessionReviveProcess=never), which stops that revival; keep the two in sync.
+#
 # Also installs bash completion for `cs` (Tab-completes folder + session names like cd).
 #
 # Examples:

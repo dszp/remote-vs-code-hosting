@@ -70,6 +70,11 @@
 ## Claude Code
 - Run `claude` **inside a tmux session** → it survives the laptop going offline.
 - Reattach from anywhere: VS Code terminal · `ssh __VM_NAME__` · `mosh __VM_NAME__` then `cs`.
+- **Claude reconnected as `<folder>-2` after a long laptop-off?** VS Code *revived* the dead
+  terminal, which re-ran the auto-attach and grabbed the base session before the Claude tab did.
+  Fixed VM-side by `deploy/67-vscode-terminal-settings.sh` (sets `persistentSessionReviveProcess:
+  never` for both Remote-SSH and code-server). Immediate workaround if it still happens: exit and
+  `cs <folder>`. Test the fix by fully **closing** the window (not Reload Window) and reopening.
 - The code-server **extension** panel is window-bound; the **tmux terminal** is the durable one.
 - Runs **fullscreen with the mouse enabled** (`"tui": "fullscreen"`, no `CLAUDE_CODE_DISABLE_MOUSE`). To click Claude's UI cleanly, hand it the mouse: `Ctrl-b m` to turn **tmux** mouse OFF (else the two fight → `aN;NaNM` garbage). For wheel scroll without clicks instead, set `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1`. **Copy from Claude:** Shift-drag (ghostty native) always works; over SSH a tmux copy also hits the local clipboard (OSC 52).
 
