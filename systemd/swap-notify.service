@@ -1,0 +1,11 @@
+# Reference only — deploy/95-swap-monitor.sh writes the rendered unit (with the real
+# DEV_USER) to /etc/systemd/system. Runs the per-user high-swap push check as the dev
+# user, reusing ~/.notify/push.env. Paired with swap-notify.timer.
+[Unit]
+Description=Notify when swap usage is high (memory-pressure early warning)
+
+[Service]
+Type=oneshot
+User=__DEV_USER__
+Environment=HOME=/home/__DEV_USER__
+ExecStart=/home/__DEV_USER__/.notify/swap-check.sh

@@ -70,6 +70,9 @@ they're marked **[manual]**.
    ./deploy/run-remote.sh __DEV_USER__@<vm-ip> deploy/10-base.sh DEV_USER=__DEV_USER__
    ```
    ⚠ It sets key-only SSH auth — keep this session open and verify a **new** SSH session works before closing it.
+   It also provisions a **swapfile** sized to RAM (`SWAP_GB=<n>` to override, `SWAP_GB=0` to skip; idempotent —
+   leaves existing swap alone). The VM has no swap out of the box, and without it a memory spike (several
+   concurrent Claude sessions) OOM-kills the tmux server and every session. Paired with the high-swap alert (**G**).
 
 3. **Tailscale (primary transport)** — on the VM. **[manual]** browser auth unless you pass `TS_AUTHKEY`:
    ```bash
@@ -244,6 +247,24 @@ transport). Separately, Claude Code now runs `"tui": "fullscreen"` with the mous
 **and** Claude-fullscreen-mouse on at once cause `aN;NaNM` click-drag garbage, only one layer
 should own the mouse at a time — toggle tmux's with **`Ctrl-b m`** (the status bar shows
 **MOUSE ON/OFF**).
+
+**G. Swap safety net + high-swap alert.** The VM ships with **no swap**; a stack of concurrent
+Claude Code sessions can exhaust RAM, at which point the kernel OOM-killer takes down the user
+`systemd` + tmux server, dropping every session. Two parts fix it: `10-base.sh` provisions a
+swapfile (sized to RAM — see step 2) so pressure **pages** instead of killing, and this step adds
+an **early-warning alert** so you can shed load before swap fills. Reuses the **B** notify bridge —
+Mac desktop notification when connected, push (Pushover/ntfy) when offline.
+```bash
+./deploy/run-remote.sh __VM_NAME__ deploy/95-swap-monitor.sh DEV_USER=__DEV_USER__
+```
+`swap-notify.timer` runs `swap-check.sh` every 2 min. It's silent until swap-used crosses
+`SWAP_HIGH_PCT` (default **50%**), then notifies via the bridge and self-debounces: no re-nag for
+`SWAP_REMIND_SECS` (30 min) while it stays high, and it re-arms only after swap falls below
+`SWAP_REARM_PCT` (25%) — hysteresis, so a value hovering at the line can't flap. Tune via an
+`Environment=` line in the service or by editing the script. `NOTIFY_PUSH_MODE` is shared with **B**/**E**.
+
+Test without waiting for real pressure (forces one send, then clears state):
+`sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ SWAP_HIGH_PCT=0 NOTIFY_PUSH_MODE=always /home/__DEV_USER__/.notify/swap-check.sh; rm -f /home/__DEV_USER__/.notify/swap-check.state`
 
 ## Upgrading code-server (new releases)
 
