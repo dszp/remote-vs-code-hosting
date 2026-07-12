@@ -114,8 +114,24 @@ they're marked **[manual]**.
    ./deploy/run-remote.sh __VM_NAME__ deploy/60-session-boot.sh DEV_USER=__DEV_USER__  # recreate 'claude' session on boot
    ./deploy/run-remote.sh __VM_NAME__ deploy/65-auto-attach.sh  DEV_USER=__DEV_USER__  # interactive shells auto-enter a folder-named session
    ./deploy/run-remote.sh __VM_NAME__ deploy/66-code-ipc.sh     DEV_USER=__DEV_USER__  # `code` self-heals across Remote-SSH reconnects
+   ./deploy/run-remote.sh __VM_NAME__ deploy/67-vscode-terminal-settings.sh DEV_USER=__DEV_USER__  # stop VS Code reviving terminals into the tmux-attach race
    ./deploy/run-remote.sh __VM_NAME__ deploy/70-cs-shortcut.sh                   # install the `cs` helper on PATH
    ```
+
+   `67-vscode-terminal-settings.sh` is the VS Code half of the reconnect story that
+   `65-auto-attach.sh` starts. After a long laptop-off period VS Code **revives** the dead
+   terminal processes on reconnect; a revived shell re-runs `~/.bashrc` and grabs the
+   folder-named tmux session `<folder>` before the Claude-extension terminal does,
+   so Claude lands on `<folder>-2`. The step sets
+   `terminal.integrated.persistentSessionReviveProcess: never` (machine scope, VM-side) in
+   **both** client surfaces — native Remote-SSH (`~/.vscode-server/data/Machine/settings.json`)
+   and code-server (`~/.local/share/code-server/Machine/settings.json`) — so a killed terminal
+   returns as static history instead of a racing shell. It's the *soft* switch:
+   `enablePersistentSessions` stays default-true, so plain reloads and short blips still
+   reattach terminals to their live, tmux-backed shells; only genuinely-dead-process revival
+   is disabled. Verify it by fully **closing** the VS Code window/app (not just Reload Window,
+   which takes the reconnect path) and reopening. Idempotent and non-destructive: it skips a
+   key you've already set and refuses to touch a settings file it can't parse as plain JSON.
 
    `66-code-ipc.sh` installs a VM-side `code` wrapper: on a Remote-SSH reconnect VS Code
    mints a **new** IPC socket and abandons the old one *without deleting the file*, so a
