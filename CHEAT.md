@@ -93,6 +93,16 @@
   `journalctl -u dnf-automatic.service -n 30` · check now: `dnf needs-restarting -r` (exit 1 = reboot needed).
 - Reboot when ready: `sudo reboot` (or `sudo systemctl reboot`).
 
+## Memory / swap
+- The VM has a **swapfile** (`/swapfile`, sized to RAM) so a memory spike pages instead of
+  OOM-killing every session — `10-base.sh` provisions it; `swap-notify.timer` warns before it fills.
+- Status: `swapon --show` · `free -h` · `systemctl status swap-notify.timer`.
+- The alert fires at **≥50%** swap used, via the same bridge as Claude (Mac desktop when connected,
+  else push). Tunables in `~/.notify/swap-check.sh`: `SWAP_HIGH_PCT` / `SWAP_REARM_PCT` / `SWAP_REMIND_SECS`.
+- Test it (forces a send, then clears state):
+  `sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ SWAP_HIGH_PCT=0 NOTIFY_PUSH_MODE=always /home/__DEV_USER__/.notify/swap-check.sh; rm -f /home/__DEV_USER__/.notify/swap-check.state`
+- Running low? Fewer simultaneous `claude` sessions is the real lever — swap is a cushion, not a cap.
+
 ## After a reboot
 - `ssh __VM_NAME__` works on its own (tailscaled + sshd auto-start).
 - The `claude` session is re-created empty by the boot service; anything that was *running* stopped — re-run `claude`.

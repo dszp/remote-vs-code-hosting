@@ -1,0 +1,12 @@
+# Reference only — deploy/95-swap-monitor.sh installs + enables this timer. Polls swap
+# usage every 2 minutes; the check is near-free (reads /proc) and self-debounces, so it
+# only pushes on crossing the threshold and re-nags at most every 30 min while high.
+[Unit]
+Description=Poll swap usage and alert on high memory pressure
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
