@@ -36,7 +36,25 @@ dir="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)"
 [ -z "$msg" ] && msg="Claude needs your attention"
 name=""; [ -n "$dir" ] && name="$(basename "$dir")"
 host="${NOTIFY_SSH_HOST:-__VM_SSH_ALIAS__}"
-url=""; [ -n "$dir" ] && url="vscode://vscode-remote/ssh-remote+${host}${dir}"   # desktop: native VS Code
+# desktop: native VS Code. Prefer a .code-workspace (multi-root project) over the raw cwd —
+# opening a child folder while the workspace is open spawns/replaces a window, whereas the
+# .code-workspace URL FOCUSES the existing workspace window. Search the cwd first, then the
+# project root directly under ~/workspace; fall back to the cwd folder when there is none.
+url=""
+if [ -n "$dir" ]; then
+  wsroot="${WORKSPACE_DIR:-$HOME/workspace}"
+  case "$dir" in
+    "$wsroot"/*) wrel="${dir#"$wsroot"/}"; proot="$wsroot/${wrel%%/*}" ;;
+    *)           proot="$dir" ;;
+  esac
+  vtarget="$dir"
+  for pd in "$dir" "$proot"; do
+    for wsf in "$pd"/*.code-workspace; do
+      [ -f "$wsf" ] && { vtarget="$wsf"; break 2; }
+    done
+  done
+  url="vscode://vscode-remote/ssh-remote+${host}${vtarget}"
+fi
 title="Claude Code · $(hostname -s 2>/dev/null || echo devvm)"
 # tmux session Claude runs in — sent to the Mac (5th wire field) so the click handler
 # can focus a matching Ghostty tab (title "<session> · <host>", per config/tmux.conf
