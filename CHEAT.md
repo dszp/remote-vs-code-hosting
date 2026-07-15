@@ -76,6 +76,12 @@
   never` for both Remote-SSH and code-server). Immediate workaround if it still happens: exit and
   `cs <folder>`. Test the fix by fully **closing** the window (not Reload Window) and reopening.
 - The code-server **extension** panel is window-bound; the **tmux terminal** is the durable one.
+- **Pinged too often by "Claude is waiting for your input"?** That's the *idle* ping:
+  `messageIdleNotifThresholdMs` in `~/.claude.json` (ms; default `60000`, now `600000` = 10 min).
+  It's both the threshold **and** the repeat interval, so the default re-nags every minute while
+  you sit at the prompt. **Not** a `settings.json` key — it's silently ignored there. Permission
+  and question prompts ignore it and stay immediate. Edit atomically; no restart needed
+  (live-reloaded). Full notes + snippet: README **B**.
 - Runs **fullscreen with the mouse enabled** (`"tui": "fullscreen"`, no `CLAUDE_CODE_DISABLE_MOUSE`). To click Claude's UI cleanly, hand it the mouse: `Ctrl-b m` to turn **tmux** mouse OFF (else the two fight → `aN;NaNM` garbage). For wheel scroll without clicks instead, set `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1`. **Copy from Claude:** Shift-drag (ghostty native) always works; over SSH a tmux copy also hits the local clipboard (OSC 52).
 
 ## Secrets (`op` proxy)

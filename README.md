@@ -199,6 +199,40 @@ session — so notifications from VS Code-driven sessions behave as before. If t
 attached in both, Ghostty wins. The first Ghostty-targeting click prompts once for Automation
 permission (terminal-notifier → Ghostty).
 
+*Tuning how often Claude pings you.* "Claude is waiting for your input" is Claude Code's **idle**
+ping, set by `messageIdleNotifThresholdMs` (ms) in **`~/.claude.json`** on the VM — Claude Code's
+global config, **not** `~/.claude/settings.json` (see the gotcha below). The default `60000` is used
+as *both* the idle threshold *and* the poll interval, so it re-fires **every 60 s** for as long as
+you sit at the prompt. Currently set to `600000` (10 min):
+```bash
+# on the VM. Any value in ms; Claude Code live-reloads the file, so no restart.
+python3 - <<'PY'
+import json, os, tempfile
+p = os.path.expanduser('~/.claude.json')
+d = json.load(open(p))
+d['messageIdleNotifThresholdMs'] = 600000        # 10 min (default 60000)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(p)); os.close(fd)
+json.dump(d, open(tmp, 'w'), indent=2); os.chmod(tmp, 0o644); os.replace(tmp, p)
+PY
+```
+Write it **atomically** (temp + `os.replace`, as above) — a live Claude Code session rewrites
+`~/.claude.json` every few seconds. It also *watches* the file and reloads on mtime change, so an
+external edit applies immediately and survives the session's own writes.
+
+This throttles **only** the idle ping (`notificationType:"idle_prompt"`). "Claude needs your
+permission" and question prompts are separate call sites that never consult the threshold and stay
+immediate — that's the point: fewer nags, no missed requests. There's no way to disable *just* the
+idle ping short of a very large value.
+
+**Gotcha:** this key does **not** work in `~/.claude/settings.json`. A settings key only overrides
+the global config where the binary has an `IP()?.settings.X ?? St().X` accessor; this one is read
+bare from the global config, so a `settings.json` entry is accepted by the schema and **silently
+ignored**. `claude config set` no longer exists — edit the file. To re-check any of this against a
+future Claude Code build, grep the compiled binary (`strings` isn't installed on the VM):
+```bash
+rg -a 'messageIdleNotifThresholdMs.{0,120}' ~/.nvm/versions/node/*/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+```
+
 **C. Laptop helpers.** `config/shell-helpers.sh` (append to `~/.zshrc`) adds `rcode [folder]`
 (open a VM workspace folder in a new Remote-SSH window) and `rpaste` (upload the clipboard image
 to the VM and copy back a path Claude can read — pasting a screenshot into a remote terminal only
