@@ -1,12 +1,32 @@
 # Cheatsheet — remote dev VM (`__VM_NAME__`)
 
 ## Connect
-- `ssh __VM_NAME__` — auto-attaches a persistent session named after the folder you land in
-  (home → `claude`). A 2nd terminal opened while that session is being viewed gets `folder-2`
-  (it won't hijack/mirror the one Claude's in); use `cs <folder>` to force the same one.
-- `mosh __VM_NAME__` — resilient over roaming / flaky links, then `cs`.
+- `ssh __VM_NAME__` — lands in a **plain shell**; human logins are never auto-attached.
+  Ask for what you want: `mux` (current backend) · `cs [folder]` (tmux) · `herdr`.
+- `mosh __VM_NAME__` — resilient over roaming / flaky links, then `mux`.
 - **VS Code:** Remote-SSH → `__VM_NAME__` (or `__VM_NAME__-cf` when off-tailnet) → open `~/workspace/<project>`.
 - **Any browser (incl. iPad):** `https://__CODE_HOSTNAME__` (Access → code-server password).
+
+## Multiplexer: tmux or herdr (`mux` on the VM)
+Two multiplexers coexist as peers — never nest them. tmux is the default and the one VS Code
+integrated terminals auto-attach (so the Claude extension's terminal stays persistent); herdr
+is the agent-aware one, project-oriented, useful when several coding agents run at once.
+Moshi lists **both** backends' sessions in its picker.
+- `mux` — attach whichever backend the policy names · `mux tmux` / `mux herdr` — that one, now
+- `mux use <tmux|herdr|off>` — set the policy (what VS Code auto-attaches; `off` = plain shells)
+- `mux status` — policy + session counts · policy file: `~/.config/remote-vs-code/mux.env`
+- **Prefix collision:** both use `Ctrl-b`. Harmless as peers; rebind before ever nesting.
+- herdr detach `Ctrl-b q` · panes survive in its server · `herdr integration status` shows the
+  Claude hook (a no-op outside herdr panes — it only reports session identity)
+- **Sessions:** VS Code terminals get a session named after the `.code-workspace` (else the
+  project dir); a human login stays on `default` so the two never mirror. `herdr session list`
+- **Persist a named session across reboots:** `systemctl --user enable herdr-session@<name>.service`
+  (template from `deploy/60-session-boot.sh`; `default` has its own unit). Use `enable` without
+  `--now` when it is already running on demand — `start` would collide on its socket.
+- **Renaming** (all four levels, after creation): `herdr workspace rename <ws> <label…>` ·
+  `herdr agent rename <pane> <name>|--clear` · `herdr tab rename <tab> <name>` ·
+  `herdr pane rename <pane> <name>`. Add `--session <name>` for a non-default session.
+- Not in herdr: the `moshi <dir>` project launcher is tmux-only.
 
 ## Sessions (`cs` on the VM)
 - `cs` — attach/create the current folder's session (home → `claude`); `cs .` is the same
@@ -30,7 +50,8 @@
 ## Multiple terminals — which tool
 - **More shells, one tab, same session:** tmux windows — `Ctrl-b c` new · `Ctrl-b n`/`p` or `Ctrl-b 0-9` switch · `Ctrl-b w` list · `Ctrl-b ,` rename
 - **Independent tab/session:** `devx` (Mac) or `cs -n` (VM) — won't mirror
-- **Non-tmux scratch:** VS Code "+" → **"shell (no tmux)"** · Mac `devsh` · inline `NO_AUTO_TMUX=1 bash`
+- **Non-tmux scratch:** VS Code "+" → **"shell (no tmux)"** · Mac `devsh` · inline `NO_AUTO_TMUX=1 bash` · any plain `ssh __VM_NAME__`
+- **One tab on a specific backend:** VS Code "+" → **"herdr"** or **"tmux: folder session"**
 - ⚠ Two clients on the **same** session mirror window-switching (tmux by design) — use separate sessions, or `tmux detach-client -a` to drop every client **but yours** (never ends the session).
 
 ## tmux basics

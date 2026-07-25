@@ -14,8 +14,17 @@
 # already open, and a file test can't tell a dead-but-present socket file from a
 # live one (VS Code never unlinks the old files — they accumulate in the runtime
 # dir). This installs a thin `code` wrapper that, only when you actually run
-# `code`, repoints $VSCODE_IPC_HOOK_CLI at the newest socket that ACCEPTS a
-# connection. It complements the tmux setting rather than replacing it.
+# `code`, repoints $VSCODE_IPC_HOOK_CLI at a socket that ACCEPTS a connection.
+# It complements the tmux setting rather than replacing it.
+#
+# Newest-live-socket is only a guess, though: socket mtime is window CREATION
+# time, so with several windows open it targets the newest one rather than the
+# one you were just working in. So integrated terminals also stamp their own
+# socket into $XDG_RUNTIME_DIR/vscode-ipc-latest, and the wrapper prefers that
+# stamp over guessing. This is what lets a shell with no socket of its own — a
+# tmux or herdr pane, a session attached from a plain ssh/mosh login — still
+# land files in the window you actually used last. Backend-agnostic on purpose:
+# it does not depend on tmux's update-environment.
 #
 # NOTE: this is the VM-side `code`. The Mac-side `rcode` (config/shell-helpers.sh),
 # which opens a NEW window over Remote-SSH, is a separate mechanism — unaffected.
@@ -64,6 +73,8 @@ PY
 }
 
 # Newest vscode-ipc socket (by mtime) that is actually live; prints it, or fails.
+# mtime is the socket's CREATION time, so this means "newest WINDOW", which is not
+# necessarily the window you were last working in — see the stamp below.
 _vscode_newest_live() {
     local dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" s
     for s in $(ls -t "$dir"/vscode-ipc-*.sock 2>/dev/null); do
@@ -72,13 +83,38 @@ _vscode_newest_live() {
     return 1
 }
 
+# --- last-used-window stamp -------------------------------------------------
+# Only a REAL integrated terminal knows which window it belongs to. Shells that
+# never inherited a socket — tmux/herdr panes, sessions you attached to from a
+# plain ssh/mosh login, anything that outlived its window — have to guess, and
+# "newest socket" picks the most recently OPENED window, not the one you were
+# just typing in. So integrated terminals record their socket here on startup,
+# and everyone else prefers that over guessing. Lives in the runtime dir so it
+# vanishes with the login session instead of going stale in $HOME.
+_VSCODE_IPC_STAMP="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/vscode-ipc-latest"
+
+if [ -n "$VSCODE_IPC_HOOK_CLI" ] && [ "$TERM_PROGRAM" = vscode ]; then
+    printf '%s\n' "$VSCODE_IPC_HOOK_CLI" > "$_VSCODE_IPC_STAMP" 2>/dev/null
+fi
+
+# The stamped socket, if it is still live; prints it, or fails.
+_vscode_stamped_live() {
+    local s
+    [ -r "$_VSCODE_IPC_STAMP" ] || return 1
+    IFS= read -r s < "$_VSCODE_IPC_STAMP" || return 1
+    [ -n "$s" ] || return 1
+    _vscode_sock_live "$s" && { printf '%s' "$s"; return 0; }
+    return 1
+}
+
 # `code` wrapper: ensure a live IPC socket before delegating to the real CLI.
-# Keeps the current socket if it's still live (right window when several are
-# open); otherwise repoints to the newest live one.
+# Resolution order — own env if still live (correct window when several are open),
+# else the last-used-window stamp, else newest live socket as a last guess.
 code() {
+    local live
     if [ -z "$VSCODE_IPC_HOOK_CLI" ] || ! _vscode_sock_live "$VSCODE_IPC_HOOK_CLI"; then
-        local live
-        live=$(_vscode_newest_live) && export VSCODE_IPC_HOOK_CLI="$live"
+        live=$(_vscode_stamped_live) || live=$(_vscode_newest_live) || live=""
+        [ -n "$live" ] && export VSCODE_IPC_HOOK_CLI="$live"
     fi
     command code "$@"
 }

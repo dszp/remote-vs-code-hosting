@@ -115,7 +115,7 @@ they're marked **[manual]**.
 8. **Persistence niceties + shortcut** — on the VM:
    ```bash
    ./deploy/run-remote.sh __VM_NAME__ deploy/60-session-boot.sh DEV_USER=__DEV_USER__  # recreate 'claude' session on boot
-   ./deploy/run-remote.sh __VM_NAME__ deploy/65-auto-attach.sh  DEV_USER=__DEV_USER__  # interactive shells auto-enter a folder-named session
+   ./deploy/run-remote.sh __VM_NAME__ deploy/65-auto-attach.sh  DEV_USER=__DEV_USER__  # VS Code terminals auto-enter a folder-named session; installs `mux`
    ./deploy/run-remote.sh __VM_NAME__ deploy/66-code-ipc.sh     DEV_USER=__DEV_USER__  # `code` self-heals across Remote-SSH reconnects
    ./deploy/run-remote.sh __VM_NAME__ deploy/67-vscode-terminal-settings.sh DEV_USER=__DEV_USER__  # stop VS Code reviving terminals into the tmux-attach race
    ./deploy/run-remote.sh __VM_NAME__ deploy/70-cs-shortcut.sh                   # install the `cs` helper on PATH
@@ -367,8 +367,9 @@ version isn't pinned in the repo, so a brand-new box and an upgraded box can dif
 Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
 
 **Connect**
-- `ssh __VM_NAME__` — auto-attaches a persistent tmux session (folder→session name, home→`claude`). A 2nd terminal opened while that session is being viewed gets `folder-2` instead of mirroring it; `cs <folder>` forces the same one.
-- `mosh __VM_NAME__` then `cs` — resilient over roaming/flaky links.
+- `ssh __VM_NAME__` — lands in a **plain shell**. Human logins are never auto-attached: say what you want with `mux` (current backend), `cs [folder]` (tmux) or `herdr`.
+- `mosh __VM_NAME__` then `mux` — resilient over roaming/flaky links.
+- **VS Code terminals** *are* auto-attached, because the Claude extension's terminal has to be persistent. Backend: `RVC_AUTO_MUX` in `~/.config/remote-vs-code/mux.env` — `tmux` (default) · `herdr` · `off`. Flip it with `mux use <backend>`; a terminal profile's `RVC_AUTO_MUX` overrides the file for that one tab.
 - VS Code: Remote-SSH → `__VM_NAME__` (or `__VM_NAME__-cf` off-tailnet) → open `~/workspace/<project>`.
 - Any browser (incl. iPad): `https://__CODE_HOSTNAME__`.
 
@@ -383,7 +384,8 @@ Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
 **Multiple terminals**
 - more shells, one tab: tmux windows — `Ctrl-b c` new · `Ctrl-b n`/`p` or `0-9` switch · `Ctrl-b w` list
 - independent tab/session: `devx` (Mac) or `cs -n` (VM) — won't mirror
-- non-tmux scratch: VS Code "+" → "shell (no tmux)" · Mac `devsh` · inline `NO_AUTO_TMUX=1 bash`
+- non-tmux scratch: VS Code "+" → "shell (no tmux)" · Mac `devsh` · inline `NO_AUTO_TMUX=1 bash` · any plain `ssh __VM_NAME__`
+- pick a backend for one tab: VS Code "+" → "herdr" or "tmux: folder session"
 - ⚠ two clients on the *same* session mirror window-switching (tmux by design) — use separate sessions
 
 **tmux basics** — detach `Ctrl-b d` · panes `Ctrl-b %` / `Ctrl-b "`, move `Ctrl-b <arrow>`, zoom `Ctrl-b z` · scroll `Ctrl-b [`
