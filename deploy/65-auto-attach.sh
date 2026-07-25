@@ -1,66 +1,238 @@
 #!/usr/bin/env bash
-# Make every INTERACTIVE shell on the VM auto-attach to a persistent tmux session
-# NAMED AFTER THE FOLDER it starts in — so each VS Code window / project gets its
-# own session and its own Claude automatically. The home dir maps to 'claude'
-# (the session the boot service pre-creates). Covers VS Code terminals, ssh, mosh.
+# Auto-attach a persistent multiplexer session — in VS CODE INTEGRATED TERMINALS
+# ONLY, and only when the policy asks for it.
 #
-# Anti-hijack: a new terminal attaches the first of <folder>, <folder>-2, <folder>-3, …
-# that has NO live client. So Claude reconnects to its own <folder>, while a SECOND
-# terminal opened against a session someone's already viewing (e.g. a code-server "+"
-# tab vs the running Claude) lands on <folder>-2 instead of mirroring/fighting it.
-# Reach the busy session deliberately with `cs <folder>` (forces it, -D).
+# WHY VS CODE ONLY: the reason this exists is Claude-Code persistence. The Claude
+# extension launches `claude` in a VS Code terminal, and if that terminal is a
+# bare shell the session dies with the window. Auto-attaching there keeps Claude
+# in tmux (with linger) so it survives reconnects. A HUMAN login has no such
+# problem — you know which session you want and can say so — and being force-fed
+# a session is actively annoying: `ssh __VM_NAME__` from Ghostty used to dump you
+# into the 'claude' session (home dir -> base name 'claude'), fighting whatever
+# was already attached there. So plain ssh/mosh logins (Ghostty, Moshi, Termius)
+# now land in a NORMAL SHELL. Start one yourself:
+#     mux             whichever backend the policy names (one word, either way)
+#     mux use herdr   make herdr the default; `mux use tmux` / `mux use off`
+#     cs [folder]     tmux, folder-named  (cs -h for the rest)
+#     herdr           the herdr server directly
 #
-# One reconnect wrinkle this creates: after a long laptop-off period VS Code REVIVES the
-# dead terminal processes, and a revived shell re-runs this block and grabs the base
-# session before the Claude-extension terminal does -> Claude lands on <folder>-2. The
-# VS Code half of the fix lives in deploy/67-vscode-terminal-settings.sh
-# (persistentSessionReviveProcess=never), which stops that revival; keep the two in sync.
+# POLICY: RVC_AUTO_MUX, read from ~/.config/remote-vs-code/mux.env so you can
+# change it without redeploying (new terminals pick it up):
+#     tmux    attach the folder-named tmux session   (default)
+#     herdr   attach the herdr server instead
+#     off     never auto-attach, even in VS Code — you type `cs` / `herdr`
+# `off` is the right choice if you drive sessions from Moshi/herdr and want VS
+# Code terminals to stay dumb shells; the cost is that the Claude extension's own
+# terminal is then NOT persistent, so start Claude from `cs` instead.
 #
-# Also installs bash completion for `cs` (Tab-completes folder + session names like cd).
+# TMUX ANTI-HIJACK (tmux mode): a new terminal attaches the first of <folder>,
+# <folder>-2, <folder>-3, … with NO live client. Claude reconnects to its own
+# <folder>, while a second terminal opened against a session someone is already
+# viewing lands on <folder>-2 rather than mirroring/fighting it. Reach a busy
+# session deliberately with `cs <folder>` (forces it, -D). NOTE: a phone client
+# (Moshi) counts as a live client, so a VS Code reconnect while your phone holds
+# <folder> lands on <folder>-2 — that is the "why am I in -2" surprise. Use
+# RVC_AUTO_MUX=off + `cs <folder>` if you'd rather always choose yourself.
 #
-# Examples:
-#   open ~/workspace/proj-a in VS Code -> terminal lands in session 'proj-a'
-#   a 2nd terminal while 'proj-a' is viewed -> session 'proj-a-2'
-#   plain `ssh __VM_NAME__` (home dir)     -> session 'claude'
+# One reconnect wrinkle: after a long laptop-off period VS Code REVIVES dead
+# terminal processes, and a revived shell re-runs this block and grabs the base
+# session before the Claude-extension terminal does -> Claude lands on <folder>-2.
+# The VS Code half of the fix lives in deploy/67-vscode-terminal-settings.sh
+# (persistentSessionReviveProcess=never), which stops that revival; keep in sync.
+#
+# Also installs bash completion for `cs` (Tab-completes folder + session names).
 #
 # Guards: interactive only (scp/rsync/`ssh host cmd`/VS Code server bootstrap are
-# untouched), not already in tmux, tmux exists, and NO_AUTO_TMUX=1 opts out.
-# Idempotent: replaces any previously-installed block between the markers.
+# untouched), not already inside a multiplexer, the tool exists, and
+# NO_AUTO_TMUX=1 opts a single terminal out (the "shell (no tmux)" VS Code
+# profile sets it). Idempotent: replaces any previously-installed block.
 #
 # RUN ON: the VM. run-remote sudo's; we edit the dev user's ~/.bashrc.
 #   ./deploy/run-remote.sh __VM_NAME__ deploy/65-auto-attach.sh DEV_USER=__DEV_USER__
 set -euo pipefail
 
 DEV_USER="${DEV_USER:-__DEV_USER__}"
-RC="/home/$DEV_USER/.bashrc"
+HOME_DIR="/home/$DEV_USER"
+RC="$HOME_DIR/.bashrc"
+CONF_DIR="$HOME_DIR/.config/remote-vs-code"
+CONF="$CONF_DIR/mux.env"
 
-# Remove any prior block so re-running updates cleanly.
-if grep -qF "# >>> remote-vs-code auto-attach tmux >>>" "$RC" 2>/dev/null; then
-  sed -i '/# >>> remote-vs-code auto-attach tmux >>>/,/# <<< remote-vs-code auto-attach tmux <<</d' "$RC"
-  echo "removed previous auto-attach block"
+# Remove any prior block so re-running updates cleanly. Both marker spellings:
+# the block was "...auto-attach tmux" before it grew a herdr mode.
+for marker in "auto-attach mux" "auto-attach tmux"; do
+  if grep -qF "# >>> remote-vs-code $marker >>>" "$RC" 2>/dev/null; then
+    sed -i "/# >>> remote-vs-code $marker >>>/,/# <<< remote-vs-code $marker <<</d" "$RC"
+    echo "removed previous '$marker' block"
+  fi
+done
+
+# The policy file: created once with the default, then left alone so a local
+# choice survives redeploys.
+install -d -o "$DEV_USER" -g "$DEV_USER" -m 0755 "$CONF_DIR"
+if [ ! -f "$CONF" ]; then
+  install -o "$DEV_USER" -g "$DEV_USER" -m 0644 /dev/stdin "$CONF" <<'CONF'
+# Which multiplexer VS Code integrated terminals auto-attach to.
+#   tmux   folder-named tmux session (keeps the Claude extension's terminal persistent)
+#   herdr  the herdr server
+#   off    nothing — VS Code terminals stay plain shells; use `cs` or `herdr` by hand
+# Plain ssh/mosh logins are NEVER auto-attached, whatever this says.
+# Takes effect in new terminals; no redeploy needed.
+RVC_AUTO_MUX=tmux
+CONF
+  echo "created $CONF (RVC_AUTO_MUX=tmux)"
+else
+  echo "kept existing $CONF ($(grep -h '^RVC_AUTO_MUX=' "$CONF" 2>/dev/null || echo 'RVC_AUTO_MUX unset'))"
 fi
 
 cat >> "$RC" <<'RC'
-# >>> remote-vs-code auto-attach tmux >>>
-# Land in a persistent tmux session. Claude Code keeps the folder-named session; a new
-# TERMINAL instead reuses a FREE non-Claude session of that folder, or spins a fresh
-# <folder>-N — so a code-server/VS Code "+" terminal never hijacks the Claude session.
-# (Want the Claude session itself? run `cs <folder>` explicitly.) Opt out: NO_AUTO_TMUX=1
-if [[ $- == *i* && -z "$TMUX" && -z "$NO_AUTO_TMUX" ]] && command -v tmux >/dev/null; then
-  if [[ "$PWD" == "$HOME" ]]; then _rvc_base="claude"; else _rvc_base="${PWD##*/}"; fi
-  _rvc_base="${_rvc_base//[^a-zA-Z0-9_-]/_}"   # tmux dislikes . and : in names
-  # Attach the first of <base>, <base>-2, <base>-3, … that is NOT busy (no live client):
-  # a free/new one is reused or created (so Claude reconnects to its own <base>), while a
-  # session being actively viewed elsewhere is left alone, so the extra terminal gets <base>-N.
-  _rvc_sess="$_rvc_base"; _rvc_i=1
-  while tmux has-session -t "$_rvc_sess" 2>/dev/null \
-        && [ -n "$(tmux list-clients -t "$_rvc_sess" -F x 2>/dev/null)" ]; do
-    [ "$_rvc_i" -ge 50 ] && break
-    _rvc_i=$((_rvc_i+1)); _rvc_sess="${_rvc_base}-${_rvc_i}"
-  done
-  tmux new -A -D -s "$_rvc_sess" -c "$PWD"
-  unset _rvc_base _rvc_sess _rvc_i
+# >>> remote-vs-code auto-attach mux >>>
+# Auto-attach a persistent multiplexer — ONLY in VS Code integrated terminals.
+# A plain ssh/mosh login (Ghostty, Moshi, Termius) lands in a normal shell; start
+# a session yourself with `cs` (tmux) or `herdr`. Policy: RVC_AUTO_MUX in
+# ~/.config/remote-vs-code/mux.env = tmux (default) | herdr | off.
+# Per-terminal opt-out: NO_AUTO_TMUX=1. Rationale: deploy/65-auto-attach.sh.
+
+# Land interactive LOGINS in the workspace dir rather than $HOME — it is the first
+# cd of every session anyway. Deliberately narrow: only a fresh LOGIN shell that
+# actually landed in $HOME moves, so nothing that picked a directory on purpose is
+# overridden. Excluded on purpose:
+#   - VS Code terminals: VS Code chose the folder, and $PWD is what names the herdr
+#     session below, so moving it would rename the session out from under you.
+#   - tmux / herdr panes: they restore their own cwd (and are not login shells).
+#   - anything non-interactive: scp/rsync/`ssh host cmd` never reach this.
+# Opt out for one shell: NO_AUTO_CD=1.
+if [[ $- == *i* && -z "$TMUX" && -z "${HERDR_ENV:-}" && -z "${NO_AUTO_CD:-}" \
+      && "${TERM_PROGRAM:-}" != "vscode" && "$PWD" == "$HOME" ]] \
+   && shopt -q login_shell; then
+  cd "${WORKSPACE_DIR:-$HOME/workspace}" 2>/dev/null || true
 fi
+
+# Session name for a VS Code window: the *.code-workspace basename when there is
+# one — a multi-root workspace is the real unit of work, and its name is stable no
+# matter which of its folders the terminal happened to open in — else the folder
+# name, with $HOME mapping to 'claude'. Same precedence ~/.claude/notify-remote.sh
+# uses to decide which window to focus. herdr accepts only letters, numbers, '.',
+# '_' and '-', so anything else is folded to '_' (note '.' IS legal, unlike tmux).
+_rvc_ws_name() {
+  local ws="${WORKSPACE_DIR:-$HOME/workspace}" proot="$PWD" rel n="" f
+  case "$PWD" in
+    "$ws"/*) rel="${PWD#"$ws"/}"; proot="$ws/${rel%%/*}" ;;
+  esac
+  for f in "$PWD"/*.code-workspace "$proot"/*.code-workspace; do
+    [ -f "$f" ] || continue
+    n="${f##*/}"; n="${n%.code-workspace}"; break
+  done
+  # No workspace file: fall back to the PROJECT ROOT under $ws, not the immediate
+  # folder, so a terminal opened in any subdir joins that project's one session
+  # instead of spawning a near-duplicate (…/Remote-VS-Code/remote-vs-code would
+  # otherwise get its own). Outside $ws, proot is still $PWD, so /etc -> 'etc'.
+  # $ws itself maps to 'claude' alongside $HOME: now that a login lands in $ws, a
+  # bare `mux` there would otherwise produce a session literally named 'workspace'.
+  if [ -z "$n" ]; then
+    if [ "$PWD" = "$HOME" ] || [ "$PWD" = "$ws" ]; then n="claude"; else n="${proot##*/}"; fi
+  fi
+  printf '%s' "${n//[^A-Za-z0-9._-]/_}"
+}
+
+if [[ $- == *i* && -z "$TMUX" && -z "${RVC_MUX_ACTIVE:-}" && -z "$NO_AUTO_TMUX" \
+      && "${TERM_PROGRAM:-}" == "vscode" ]]; then
+  # File is the default; an inherited RVC_AUTO_MUX (e.g. from a VS Code terminal
+  # profile's env) wins, so don't let sourcing overwrite one that's already set.
+  [ -z "${RVC_AUTO_MUX:-}" ] && [ -r ~/.config/remote-vs-code/mux.env ] \
+    && . ~/.config/remote-vs-code/mux.env
+  case "${RVC_AUTO_MUX:-tmux}" in
+    tmux)
+      if command -v tmux >/dev/null; then
+        if [[ "$PWD" == "$HOME" ]]; then _rvc_base="claude"; else _rvc_base="${PWD##*/}"; fi
+        _rvc_base="${_rvc_base//[^a-zA-Z0-9_-]/_}"   # tmux dislikes . and : in names
+        # Attach the first of <base>, <base>-2, <base>-3, … that is NOT busy (no live
+        # client): a free/new one is reused or created (so Claude reconnects to its own
+        # <base>), while a session being actively viewed elsewhere is left alone.
+        _rvc_sess="$_rvc_base"; _rvc_i=1
+        while tmux has-session -t "$_rvc_sess" 2>/dev/null \
+              && [ -n "$(tmux list-clients -t "$_rvc_sess" -F x 2>/dev/null)" ]; do
+          [ "$_rvc_i" -ge 50 ] && break
+          _rvc_i=$((_rvc_i+1)); _rvc_sess="${_rvc_base}-${_rvc_i}"
+        done
+        tmux new -A -D -s "$_rvc_sess" -c "$PWD"
+        unset _rvc_base _rvc_sess _rvc_i
+      fi
+      ;;
+    herdr)
+      # A NAMED session per VS Code workspace, so each window is independent and
+      # does NOT mirror whatever a phone/Ghostty client is looking at. herdr focus
+      # is a session-level property (exactly one workspace is `focused`), so every
+      # client on one session renders the same view — named sessions are the only
+      # real isolation, each getting its own server and socket.
+      #
+      # DELIBERATE ASYMMETRY: only this auto-attach path derives a name. A human
+      # running bare `herdr` or `mux` stays on `default`. If both sides derived the
+      # same name from the same folder they would collide right back into mirroring,
+      # which is the thing this is here to avoid.
+      #
+      # RVC_MUX_ACTIVE is exported so panes the herdr SERVER spawns — which inherit
+      # the server's env, TERM_PROGRAM=vscode included — don't recurse into herdr.
+      # Not exec'd, so detaching (ctrl+b q) drops you to this shell instead of
+      # closing the terminal, matching the tmux branch.
+      if command -v herdr >/dev/null; then
+        RVC_MUX_ACTIVE=herdr herdr --session "$(_rvc_ws_name)"
+      fi
+      ;;
+    off|*) : ;;
+  esac
+fi
+
+# `mux` — one word to get a session, whichever backend you're currently on, so
+# muscle memory doesn't have to track which multiplexer you've settled on.
+#   mux                  launch per policy (herdr if selected, else tmux via `cs`)
+#   mux tmux | mux herdr  launch that one NOW without changing the policy
+#   mux use <tmux|herdr|off>   set the persistent policy (what VS Code auto-attaches)
+#   mux status           show the policy and what's running
+# Note `off` only disables AUTO-attach; bare `mux` still gives you tmux, since a
+# command you typed on purpose should do something. Want herdr occasionally
+# without making it the default? `mux herdr`.
+# Optional $1 = session name. Bare (no name) means the 'default' session on
+# purpose: VS Code auto-attach uses workspace-named sessions, and a human landing
+# on the same derived name would collide back into a mirrored view.
+# `mux herdr ws` opts in to the same name VS Code would pick for this directory.
+_mux_herdr() {
+  if [ -n "${RVC_MUX_ACTIVE:-}" ]; then echo "already inside herdr" >&2; return 1; fi
+  command -v herdr >/dev/null || { echo "mux: herdr is not installed" >&2; return 1; }
+  local n="${1:-}"
+  [ "$n" = "ws" ] && n="$(_rvc_ws_name)"
+  if [ -n "$n" ]; then RVC_MUX_ACTIVE=herdr herdr --session "$n"
+  else RVC_MUX_ACTIVE=herdr herdr; fi
+}
+mux() {
+  local conf="$HOME/.config/remote-vs-code/mux.env" pol=""
+  [ -r "$conf" ] && pol="$(sed -n 's/^RVC_AUTO_MUX=//p' "$conf" | tail -1)"
+  pol="${pol:-tmux}"
+  case "${1:-}" in
+    use)
+      case "${2:-}" in
+        tmux|herdr|off)
+          mkdir -p "${conf%/*}"
+          if [ -f "$conf" ] && grep -q '^RVC_AUTO_MUX=' "$conf"; then
+            sed -i "s|^RVC_AUTO_MUX=.*|RVC_AUTO_MUX=$2|" "$conf"
+          else
+            printf 'RVC_AUTO_MUX=%s\n' "$2" >> "$conf"
+          fi
+          echo "policy -> $2 (VS Code terminals; applies to NEW terminals)" ;;
+        *) echo "usage: mux use <tmux|herdr|off>" >&2; return 2 ;;
+      esac ;;
+    status)
+      echo "policy (VS Code auto-attach): $pol"
+      printf 'tmux sessions: %s\n' "$(tmux ls 2>/dev/null | wc -l)"
+      if command -v herdr >/dev/null; then echo "herdr: $(herdr --version 2>/dev/null)"
+      else echo "herdr: not installed"; fi ;;
+    tmux)  cs ;;
+    herdr) _mux_herdr "${2:-}" ;;
+    "")    case "$pol" in herdr) _mux_herdr ;; *) cs ;; esac ;;
+    -h|--help|help)
+      echo "mux [tmux | herdr [<name>|ws]] | mux use <tmux|herdr|off> | mux status" ;;
+    *) echo "usage: mux [tmux|herdr] | mux use <tmux|herdr|off> | mux status" >&2; return 2 ;;
+  esac
+}
 
 # Tab-complete `cs` like `cd`: folder names in the current dir + existing tmux sessions.
 # So from ~/workspace:  cs Rem<Tab> -> cs Remote-VS-Code  (then attaches that session).
@@ -70,7 +242,8 @@ _cs_complete() {
   mapfile -t COMPREPLY < <(printf '%s\n' $(compgen -d -- "$cur") $(compgen -W "$sessions" -- "$cur") | awk 'NF && !seen[$0]++')
 }
 complete -o filenames -F _cs_complete cs
-# <<< remote-vs-code auto-attach tmux <<<
+complete -W "tmux herdr use status" mux
+# <<< remote-vs-code auto-attach mux <<<
 RC
 chown "$DEV_USER:$DEV_USER" "$RC"
-echo "installed folder-named auto-attach block (+ cs completion) in $RC"
+echo "installed VS-Code-only auto-attach block (+ cs completion) in $RC"
