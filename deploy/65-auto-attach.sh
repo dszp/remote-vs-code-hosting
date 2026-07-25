@@ -234,6 +234,55 @@ mux() {
   esac
 }
 
+# hn — name THIS pane's herdr agent (optionally its space too) with no ID lookup.
+#   hn              show this pane's agent + space labels
+#   hn <name>       name the agent
+#   hn -w <name>    name the agent AND its space
+#   hn --clear      back to herdr's auto label
+#
+# Why this exists when everything else is a keystroke: herdr binds rename-tab
+# (prefix+shift+t) and rename-workspace (prefix+,) but there is NO rename_agent key —
+# `config check` rejects it as an unknown key, so agent labels are CLI-only. And the
+# agent label is the one that matters for navigation, because in the TUI the agents
+# list IS clickable (clicking one jumps to its tab) while the tab bar and space list
+# are not, so you steer by agent name.
+#
+# A herdr pane exports HERDR_PANE_ID / HERDR_WORKSPACE_ID / HERDR_SOCKET_PATH, and the
+# CLI honors the socket path, so a bare `herdr` call from inside a pane already talks to
+# that pane's own server — no --session needed even in a named session. Uses the env
+# rather than `herdr pane current` on purpose: env names the pane this shell lives in,
+# while `current` names the FOCUSED pane, which is not always the same one.
+hn() {
+  local pane="${HERDR_PANE_ID:-}" wsid="${HERDR_WORKSPACE_ID:-}" both=0
+  if [ -z "$pane" ]; then echo "hn: not inside a herdr pane" >&2; return 1; fi
+  case "${1:-}" in
+    -h|--help) echo "hn [-w] <name> | hn --clear | hn   (name this pane's agent; -w also names its space)"; return 0 ;;
+    --clear)   herdr agent rename "$pane" --clear >/dev/null && echo "agent label cleared ($pane)"; return ;;
+    -w|--workspace) both=1; shift ;;
+  esac
+  if [ -z "${1:-}" ]; then
+    # NB the agent's custom name lives in "name"; "label" is the WORKSPACE field. Reading
+    # the wrong one makes a successful rename look like a no-op. Also print the terminal
+    # title, which for Claude is its own live task summary.
+    herdr agent get "$pane" 2>/dev/null | python3 -c 'import sys,json
+a=json.load(sys.stdin)["result"]["agent"]
+print("  agent %s  name=%r  status=%s" % (a.get("agent"), a.get("name"), a.get("agent_status")))
+t=a.get("terminal_title_stripped")
+if t: print("  doing %r" % t)' 2>/dev/null \
+      || echo "  (no agent detected in $pane)"
+    [ -n "$wsid" ] && herdr workspace get "$wsid" 2>/dev/null | python3 -c 'import sys,json
+w=json.load(sys.stdin)["result"]["workspace"]
+print("  space %s  label=%r" % (w.get("workspace_id"), w.get("label")))' 2>/dev/null
+    # `hn` reads like a verb, so say plainly that the bare form only reports.
+    echo "  (report only — 'hn <name>' renames the agent, 'hn -w <name>' the space too)"
+    return 0
+  fi
+  herdr agent rename "$pane" "$1" >/dev/null && echo "agent -> $1 ($pane)"
+  if [ "$both" = 1 ] && [ -n "$wsid" ]; then
+    herdr workspace rename "$wsid" "$1" >/dev/null && echo "space -> $1 ($wsid)"
+  fi
+}
+
 # Tab-complete `cs` like `cd`: folder names in the current dir + existing tmux sessions.
 # So from ~/workspace:  cs Rem<Tab> -> cs Remote-VS-Code  (then attaches that session).
 _cs_complete() {

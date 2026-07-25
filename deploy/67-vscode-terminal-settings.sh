@@ -18,6 +18,11 @@
 # shells. Only the REVIVE path (process was actually killed) is disabled — exactly the
 # case that spawned the '-2'. Durable work lives in tmux/herdr, so it is unaffected.
 #
+# RIGHT-CLICK: `terminal.integrated.rightClickBehavior: nothing` passes right-click to
+# the terminal app. herdr's tab context menu (New tab / Rename / Close) was being drawn
+# UNDER VS Code's own Copy/Paste/Kill Terminal menu. Costs the VS Code terminal context
+# menu in every integrated terminal; keyboard copy/paste is unaffected.
+#
 # THE PROFILES: four entries in `terminal.integrated.profiles.linux`, so the terminal
 # "+" dropdown can override ~/.config/remote-vs-code/mux.env for ONE tab (a profile's
 # env beats the file — see 65-auto-attach.sh):
@@ -72,6 +77,8 @@ FRESH_JSON=$(cat <<'JSONC'
   // to add your own keys — the script only inserts what is missing and never rewrites
   // or strips what is already here.
   "terminal.integrated.persistentSessionReviveProcess": "never",
+  // Pass right-click to the terminal app (herdr's own tab menu) instead of VS Code's.
+  "terminal.integrated.rightClickBehavior": "nothing",
   "terminal.integrated.profiles.linux": {
     "shell (no tmux)": {
       "path": "bash",
@@ -105,9 +112,19 @@ import json, pathlib, shutil, sys, time
 path = pathlib.Path(sys.argv[1])
 raw = path.read_text()
 
-REVIVE_KEY = "terminal.integrated.persistentSessionReviveProcess"
-REVIVE_VAL = "never"
 PROFILE_KEY = "terminal.integrated.profiles.linux"
+
+# Top-level scalar settings this script owns.
+WANT_TOP = {
+    "terminal.integrated.persistentSessionReviveProcess": "never",
+    # Pass right-click to the terminal app instead of showing VS Code's own context
+    # menu. Required for a mouse-aware TUI like herdr: right-clicking a herdr tab opens
+    # herdr's New tab / Rename / Close menu, but VS Code drew its Copy/Paste/Kill
+    # Terminal menu on top of it. Tradeoff: no VS Code terminal context menu in ANY
+    # integrated terminal (keyboard copy/paste still work). Revert by setting this to
+    # "default".
+    "terminal.integrated.rightClickBehavior": "nothing",
+}
 
 # Profile name -> the exact text inserted for it (4-space body indent to match VS Code's
 # own formatting). Order here is the order they get inserted.
@@ -169,11 +186,11 @@ if not isinstance(data, dict):
 
 existing_profiles = data.get(PROFILE_KEY) if isinstance(data.get(PROFILE_KEY), dict) else None
 missing_profiles = [p for p in PROFILES if not (existing_profiles and p in existing_profiles)]
-need_revive = REVIVE_KEY not in data
+missing_top = [k for k in WANT_TOP if k not in data]
 need_profile_key = PROFILE_KEY not in data
 
-if not need_revive and not missing_profiles:
-    print(f">> {path}: revive key + all {len(PROFILES)} profiles already present — no change")
+if not missing_top and not missing_profiles:
+    print(f">> {path}: all {len(WANT_TOP)} settings + {len(PROFILES)} profiles already present — no change")
     sys.exit(0)
 
 
@@ -200,10 +217,10 @@ elif missing_profiles:
 else:
     added_profiles = []
 
-# 2. Missing revive key.
-if need_revive:
+# 2. Missing top-level scalar settings.
+for k in missing_top:
     top = new.index("{")
-    new = insert_after_brace(new, top, f'\n  "{REVIVE_KEY}": "{REVIVE_VAL}",')
+    new = insert_after_brace(new, top, f'\n  "{k}": {json.dumps(WANT_TOP[k])},')
 
 # 3. Validate before replacing anything.
 try:
@@ -211,7 +228,7 @@ try:
 except Exception as e:
     print(f"!! {path}: generated file does not parse ({e}) — NOT writing", file=sys.stderr)
     sys.exit(1)
-if REVIVE_KEY not in check or PROFILE_KEY not in check:
+if PROFILE_KEY not in check or any(k not in check for k in WANT_TOP):
     print(f"!! {path}: generated file missing expected keys — NOT writing", file=sys.stderr)
     sys.exit(1)
 for name in PROFILES:
@@ -236,8 +253,8 @@ shutil.copy2(path, bak)
 path.write_text(new)
 
 what = []
-if need_revive:
-    what.append(f"{REVIVE_KEY}={REVIVE_VAL}")
+for k in missing_top:
+    what.append(f"{k}={WANT_TOP[k]}")
 if added_profiles:
     what.append("profiles: " + ", ".join(repr(p) for p in added_profiles))
 print(f">> {path}: added {'; '.join(what)} (backup: {bak.name})")
@@ -254,7 +271,7 @@ ensure_setting() {
   if [ ! -s "$f" ]; then
     printf '%s\n' "$FRESH_JSON" > "$f"
     chown "$DEV_USER:$DEV_USER" "$f"; chmod 644 "$f"
-    echo ">> $f: created with revive key + 4 terminal profiles"
+    echo ">> $f: created with 2 settings + 4 terminal profiles"
     return
   fi
 
