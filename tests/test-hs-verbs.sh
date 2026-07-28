@@ -20,6 +20,7 @@ make_fixture "$HS_HERDR_DIR"
 export HS_STUB_JSON="$TMP/sessions.json"
 cat > "$HS_STUB_JSON" <<'JSON'
 {"sessions":[
+ {"default":true,"name":"default","running":true},
  {"default":false,"name":"Live","running":true},
  {"default":false,"name":"Dead","running":false}
 ]}
@@ -64,6 +65,37 @@ like "k name then -y"    "$out" "session delete Live"
 out="$(hs k Dead </dev/null)"
 like   "k on stopped deletes"    "$out" "session delete Dead"
 unlike "k on stopped skips stop" "$out" "session stop"
+
+# herdr answers `session delete` on its default session with session_delete_failed,
+# so hs refuses first — and `k` must refuse BEFORE stopping, never half-succeed.
+out="$(hs rm default </dev/null)"; rc=$?
+is     "rm default exits 1"        "$rc" "1"
+like   "rm default explains"       "$out" "default session"
+like   "rm default suggests stop"  "$out" "hs x default"
+unlike "rm default deletes nothing" "$out" "session delete"
+
+out="$(hs k -y default </dev/null)"; rc=$?
+is     "k default exits 1"          "$rc" "1"
+unlike "k default stops nothing"    "$out" "session stop"
+unlike "k default deletes nothing"  "$out" "session delete"
+
+# Stopping the default session is fine — only deleting it is impossible.
+like "x stops the default session" "$(hs x default)" "session stop default"
+
+# ...and the delete pickers must not offer it in the first place.
+export FZF_CAPTURE="$TMP/pick.txt"
+cat > "$TMP/bin/fzf" <<'FZF'
+#!/usr/bin/env bash
+cat > "$FZF_CAPTURE"
+exit 130
+FZF
+chmod +x "$TMP/bin/fzf"
+hs k </dev/null >/dev/null 2>&1
+unlike "k picker hides default"   "$(cat "$FZF_CAPTURE")" "default"
+like   "k picker offers the rest" "$(cat "$FZF_CAPTURE")" "Live"
+hs rm </dev/null >/dev/null 2>&1
+unlike "rm picker hides default"  "$(cat "$FZF_CAPTURE")" "default"
+like   "rm picker offers stopped" "$(cat "$FZF_CAPTURE")" "Dead"
 
 # Unknown names list the valid ones instead of failing opaquely.
 out="$(hs s Nope)"; rc=$?

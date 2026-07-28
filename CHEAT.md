@@ -62,6 +62,12 @@ from any subdirectory joins that project's one session (`~/workspace/Remote-VS-C
 session's `session.json`, which survives a stop, so stopped sessions still show
 where they live.
 
+**The `default` session can be stopped but never deleted** — herdr answers
+`session delete` on it with `session_delete_failed`. `hs rm`/`hs k` refuse it up
+front (so `hs k` can't stop it and then fail on the delete), and the pickers don't
+offer it. `hs x default` is the operation that exists; it revives on the next
+bare `herdr`.
+
 There is deliberately no `hs d`. `cs d` exists because tmux mirrors one grid across
 clients, so a stale client locks everyone's size and scroll; herdr renders per-client
 (two clients attach at different sizes without mirroring), so a second client costs
