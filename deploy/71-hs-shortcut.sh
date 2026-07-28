@@ -7,7 +7,7 @@
 #   hs s [name]    attach              (bare -> fzf picker)
 #   hs x [name]    stop  (hibernate; layout survives, processes die)
 #   hs k [name]    stop AND delete     (prompts when running; -y skips)
-#   hs rm [name]   delete a STOPPED session
+#   hs rm [name]   delete a STOPPED session  (never herdr's default session)
 #   hs ls          list name / status / directory
 #
 # Naming comes from /usr/local/lib/remote-vs-code/ws-name.sh (deploy/65), the same
@@ -49,6 +49,7 @@ hs — attach/create a persistent herdr session (sibling to `cs` for tmux)
   hs ls|list                  list name / status / directory
   hs -h | --help              this help
 There is no `hs d`: herdr renders per-client, so a stale client costs nothing.
+herdr's default session can be stopped but never deleted.
 USAGE
 }
 
@@ -62,7 +63,7 @@ command -v herdr >/dev/null 2>&1 || die "herdr is not installed"
 # `herdr session list --json` knows name/running/session_dir but NOT the working
 # directory, so each session's session.json is read for its identity_cwd. That
 # file survives a stop, so stopped sessions still show where they live.
-# Output is TSV: name \t running|stopped \t cwd ('-' when unknown).
+# Output is TSV: name \t running|stopped \t cwd ('-' when unknown) \t default|-.
 hs_sessions() {
   local json
   if ! json="$(herdr session list --json 2>&1)"; then
@@ -95,7 +96,7 @@ for s in data.get("sessions", []):
         cwd = wss[idx].get("identity_cwd") or "-"
     except Exception:
         pass
-    print("\t".join((name, status, cwd)))
+    print("\t".join((name, status, cwd, "default" if s.get("default") else "-")))
 '
 }
 
@@ -186,6 +187,16 @@ hcmd() {
 
 session_status() { hs_sessions | awk -F'\t' -v n="$1" '$1==n {print $2; exit}'; }
 
+# herdr's default session (the one at the root of ~/.config/herdr, with no
+# sessions/<name>/ dir of its own) can be stopped but NOT deleted — the server
+# answers `session delete` with session_delete_failed. Refuse before stopping
+# anything, so `hs k` cannot half-succeed.
+is_default() { [ "$(hs_sessions | awk -F'\t' -v n="$1" '$1==n {print $4; exit}')" = default ]; }
+refuse_default_delete() {
+  is_default "$1" || return 0
+  die "$1 is herdr's default session — herdr cannot delete it; 'hs x $1' stops it instead"
+}
+
 require_session() { # prints the status, or explains and exits
   local st; st="$(session_status "$1")"
   if [ -z "$st" ]; then
@@ -197,11 +208,20 @@ require_session() { # prints the status, or explains and exits
   printf '%s' "$st"
 }
 
-pick() { # $1 prompt, $2 all|stopped -> selected name on stdout ('' if cancelled)
+pick() { # $1 prompt, $2 filter -> selected name on stdout ('' if cancelled)
   local rows sel
   rows="$(hs_sessions)"
-  [ "$2" = stopped ] && rows="$(printf '%s\n' "$rows" | awk -F'\t' '$2=="stopped"')"
-  [ -n "$rows" ] || die "no ${2#all} sessions to choose from"
+  # The default session is never offered for a delete: herdr would refuse it.
+  case "$2" in
+    stopped)   rows="$(printf '%s\n' "$rows" | awk -F'\t' '$2=="stopped" && $4!="default"')" ;;
+    deletable) rows="$(printf '%s\n' "$rows" | awk -F'\t' '$4!="default"')" ;;
+  esac
+  if [ -z "$rows" ]; then
+    case "$2" in
+      stopped) die "no deletable stopped sessions to choose from" ;;
+      *)       die "no sessions to choose from" ;;
+    esac
+  fi
   if ! command -v fzf >/dev/null 2>&1; then
     printf '%s\n' "$rows" | hs_fmt >&2
     die "picking needs fzf (sudo dnf install fzf), or pass a session name"
@@ -244,7 +264,7 @@ case "${1:-}" in
       case "$act" in
         s|switch|select|attach) sel="$(pick "attach to" all)" ;;
         x|stop)                 sel="$(pick "stop" all)" ;;
-        k|kill)                 sel="$(pick "STOP AND DELETE" all)" ;;
+        k|kill)                 sel="$(pick "STOP AND DELETE" deletable)" ;;
         rm|delete)              sel="$(pick "delete" stopped)" ;;
       esac
       # An empty selection means the user pressed Esc. Silent success, like cs.
@@ -264,11 +284,13 @@ case "${1:-}" in
         warn_if_current "$sel"
         hcmd herdr session stop "$sel" ;;
       rm|delete)
+        refuse_default_delete "$sel"
         if [ "$st" = running ]; then
           die "$sel is running — stop it first with 'hs x $sel', or use 'hs k $sel' to do both"
         fi
         hcmd herdr session delete "$sel" ;;
       k|kill)
+        refuse_default_delete "$sel"
         if [ "$st" = running ]; then
           # Unlike tmux, this discards saved layout as well as live processes.
           confirm "Stop AND delete running session '$sel'? Its saved layout is discarded." \
