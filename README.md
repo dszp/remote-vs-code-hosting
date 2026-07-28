@@ -119,7 +119,14 @@ they're marked **[manual]**.
    ./deploy/run-remote.sh __VM_NAME__ deploy/66-code-ipc.sh     DEV_USER=__DEV_USER__  # `code` self-heals across Remote-SSH reconnects
    ./deploy/run-remote.sh __VM_NAME__ deploy/67-vscode-terminal-settings.sh DEV_USER=__DEV_USER__  # stop VS Code reviving terminals into the tmux-attach race
    ./deploy/run-remote.sh __VM_NAME__ deploy/70-cs-shortcut.sh                   # install the `cs` helper on PATH
+   ./deploy/run-remote.sh __VM_NAME__ deploy/71-hs-shortcut.sh                   # install `hs`, the herdr equivalent of `cs`
    ```
+
+   `71-hs-shortcut.sh` installs `hs` — create/attach, `s`/`x`/`k`/`rm`, `ls` — for
+   herdr sessions. It needs `65-auto-attach.sh` to have run first: that script
+   installs `/usr/local/lib/remote-vs-code/ws-name.sh`, the shared session-naming
+   rule that keeps `hs` and VS Code auto-attach from picking different names for
+   the same project.
 
    `67-vscode-terminal-settings.sh` is the VS Code half of the reconnect story that
    `65-auto-attach.sh` starts. After a long laptop-off period VS Code **revives** the dead

@@ -41,6 +41,38 @@ Moshi lists **both** backends' sessions in its picker.
 - reattach later: `cs <name>` (on VM) · `devx <name>` (from the Mac)
 - kill: `tmux kill-session -t <name>` (on VM) · `ssh __VM_NAME__ tmux kill-session -t <name>` (Mac)
 
+## Sessions (`hs` on the VM — herdr)
+
+Same shape as `cs`, for herdr. Naming is shared with VS Code auto-attach, so `hs`
+from any subdirectory joins that project's one session (`~/workspace/Remote-VS-Code/remote-vs-code`
+→ `Remote-VS-Code`, not a near-duplicate).
+
+- `hs` — attach/create the current project's session; `hs .` is the same
+- `hs <dir>` — name a session after a folder **and** start it there; Tab-completes like `cd`
+- `hs <name>` — attach/create a plain **named** session
+- `hs -n [base]` — a **new independent** session (`folder-2`, `folder-3`, …)
+- `hs s` — **s**witch to a session (also `switch`/`attach`); revives a stopped one
+- `hs x` — **stop** it: processes die, the saved layout stays on disk (also `stop`)
+- `hs rm` — **delete** a stopped session (refuses while it is running; also `delete`)
+- `hs k` — **k**ill = stop **and** delete in one go; prompts while running, `-y` skips
+- `hs ls` — list name / status / directory
+- bare `s`/`x`/`k`/`rm` = **fzf picker**; `hs rm`'s picker lists stopped sessions only
+
+`herdr session list` has no directory column — `hs ls` adds one by reading each
+session's `session.json`, which survives a stop, so stopped sessions still show
+where they live.
+
+There is deliberately no `hs d`. `cs d` exists because tmux mirrors one grid across
+clients, so a stale client locks everyone's size and scroll; herdr renders per-client
+(two clients attach at different sizes without mirroring), so a second client costs
+nothing — and its socket API has no kick-client request.
+
+| you want | tmux | herdr |
+|---|---|---|
+| stop it, keep the layout | — | `hs x` |
+| throw it away entirely | `cs k` | `hs k` |
+| boot other clients off | `cs d` | not needed |
+
 ## From the Mac (helpers in `~/.zshrc`)
 - `devx` — **new** independent session (= `ssh -t __VM_NAME__ cs -n`)
 - `devx <name>` — reattach/create a named session
