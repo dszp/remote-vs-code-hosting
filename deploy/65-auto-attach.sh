@@ -57,6 +57,15 @@ RC="$HOME_DIR/.bashrc"
 CONF_DIR="$HOME_DIR/.config/remote-vs-code"
 CONF="$CONF_DIR/mux.env"
 
+# Optional: also drop a standalone copy of the hs completion for the test suite.
+# Extracted from the same heredoc that is appended to ~/.bashrc, so tests can
+# never drift from what actually ships. $0 is this script; when run through
+# run-remote.sh (stdin) $0 is "bash" and the sed finds nothing — harmless,
+# because HS_COMPLETE_COPY is only ever set for local test builds.
+emit_hs_complete() {
+  sed -n '/^_hs_complete() {$/,/^complete -o filenames -F _hs_complete hs$/p' "$0"
+}
+
 # Remove any prior block so re-running updates cleanly. Both marker spellings:
 # the block was "...auto-attach tmux" before it grew a herdr mode.
 for marker in "auto-attach mux" "auto-attach tmux"; do
@@ -84,6 +93,56 @@ else
   echo "kept existing $CONF ($(grep -h '^RVC_AUTO_MUX=' "$CONF" 2>/dev/null || echo 'RVC_AUTO_MUX unset'))"
 fi
 
+# The session-naming rule lives in ONE place: this lib. Both the .bashrc block
+# below and /usr/local/bin/hs (deploy/71-hs-shortcut.sh) source it, so `hs` and
+# VS Code auto-attach can never disagree about what a folder's session is called.
+# Deploy scripts are streamed over stdin, so the content must be inline here.
+WS_LIB_DIR="/usr/local/lib/remote-vs-code"
+WS_LIB="$WS_LIB_DIR/ws-name.sh"
+install -d -m 0755 "$WS_LIB_DIR"
+install -m 0644 /dev/stdin "$WS_LIB" <<'WSLIB'
+# _rvc_ws_name [dir] — session name for a directory (default $PWD).
+#
+# The *.code-workspace basename when there is one — a multi-root workspace is the
+# real unit of work, and its name is stable no matter which of its folders the
+# terminal happened to open in — else the PROJECT ROOT under $WORKSPACE_DIR, not
+# the immediate folder, so a terminal in any subdir joins that project's one
+# session instead of spawning a near-duplicate (…/Remote-VS-Code/remote-vs-code
+# would otherwise get its own). Outside the workspace dir the project root is the
+# directory itself, so /etc -> 'etc'. $HOME and $WORKSPACE_DIR both map to
+# 'claude': a login lands in the workspace dir, and a bare `mux` there would
+# otherwise produce a session literally named 'workspace'.
+#
+# herdr accepts only letters, numbers, '.', '_' and '-', so anything else is
+# folded to '_' (note '.' IS legal, unlike tmux).
+#
+# Source of truth: deploy/65-auto-attach.sh. Do not edit in place — it is
+# overwritten on every redeploy.
+_rvc_ws_name() {
+  local d="${1:-$PWD}"
+  local ws="${WORKSPACE_DIR:-$HOME/workspace}" proot rel n="" f
+  proot="$d"
+  case "$d" in
+    "$ws"/*) rel="${d#"$ws"/}"; proot="$ws/${rel%%/*}" ;;
+  esac
+  for f in "$d"/*.code-workspace "$proot"/*.code-workspace; do
+    [ -f "$f" ] || continue
+    n="${f##*/}"; n="${n%.code-workspace}"; break
+  done
+  if [ -z "$n" ]; then
+    if [ "$d" = "$HOME" ] || [ "$d" = "$ws" ]; then n="claude"; else n="${proot##*/}"; fi
+  fi
+  printf '%s' "${n//[^A-Za-z0-9._-]/_}"
+}
+WSLIB
+echo "installed $WS_LIB"
+# Optional second copy so the repo's test suite can source the same bytes.
+if [ -n "${WS_LIB_COPY:-}" ]; then
+  install -d -m 0755 "$(dirname "$WS_LIB_COPY")"
+  install -m 0644 "$WS_LIB" "$WS_LIB_COPY"
+  echo "copied lib to $WS_LIB_COPY"
+fi
+
 cat >> "$RC" <<'RC'
 # >>> remote-vs-code auto-attach mux >>>
 # Auto-attach a persistent multiplexer — ONLY in VS Code integrated terminals.
@@ -107,32 +166,19 @@ if [[ $- == *i* && -z "$TMUX" && -z "${HERDR_ENV:-}" && -z "${NO_AUTO_CD:-}" \
   cd "${WORKSPACE_DIR:-$HOME/workspace}" 2>/dev/null || true
 fi
 
-# Session name for a VS Code window: the *.code-workspace basename when there is
-# one — a multi-root workspace is the real unit of work, and its name is stable no
-# matter which of its folders the terminal happened to open in — else the folder
-# name, with $HOME mapping to 'claude'. Same precedence ~/.claude/notify-remote.sh
-# uses to decide which window to focus. herdr accepts only letters, numbers, '.',
-# '_' and '-', so anything else is folded to '_' (note '.' IS legal, unlike tmux).
-_rvc_ws_name() {
-  local ws="${WORKSPACE_DIR:-$HOME/workspace}" proot="$PWD" rel n="" f
-  case "$PWD" in
-    "$ws"/*) rel="${PWD#"$ws"/}"; proot="$ws/${rel%%/*}" ;;
-  esac
-  for f in "$PWD"/*.code-workspace "$proot"/*.code-workspace; do
-    [ -f "$f" ] || continue
-    n="${f##*/}"; n="${n%.code-workspace}"; break
-  done
-  # No workspace file: fall back to the PROJECT ROOT under $ws, not the immediate
-  # folder, so a terminal opened in any subdir joins that project's one session
-  # instead of spawning a near-duplicate (…/Remote-VS-Code/remote-vs-code would
-  # otherwise get its own). Outside $ws, proot is still $PWD, so /etc -> 'etc'.
-  # $ws itself maps to 'claude' alongside $HOME: now that a login lands in $ws, a
-  # bare `mux` there would otherwise produce a session literally named 'workspace'.
-  if [ -z "$n" ]; then
-    if [ "$PWD" = "$HOME" ] || [ "$PWD" = "$ws" ]; then n="claude"; else n="${proot##*/}"; fi
-  fi
-  printf '%s' "${n//[^A-Za-z0-9._-]/_}"
-}
+# Session naming lives in one file shared with /usr/local/bin/hs, so `hs` and this
+# auto-attach block can never disagree. Installed by deploy/65-auto-attach.sh.
+# Same precedence ~/.claude/notify-remote.sh uses to decide which window to focus.
+# The fallback keeps a shell usable if the lib is ever missing.
+if [ -r /usr/local/lib/remote-vs-code/ws-name.sh ]; then
+  . /usr/local/lib/remote-vs-code/ws-name.sh
+else
+  _rvc_ws_name() {
+    local d="${1:-$PWD}" n
+    if [ "$d" = "$HOME" ]; then n="claude"; else n="${d##*/}"; fi
+    printf '%s' "${n//[^A-Za-z0-9._-]/_}"
+  }
+fi
 
 if [[ $- == *i* && -z "$TMUX" && -z "${RVC_MUX_ACTIVE:-}" && -z "$NO_AUTO_TMUX" \
       && "${TERM_PROGRAM:-}" == "vscode" ]]; then
@@ -292,7 +338,47 @@ _cs_complete() {
 }
 complete -o filenames -F _cs_complete cs
 complete -W "tmux herdr use status" mux
+
+# Tab-complete `hs` like `cs`: folder names in the current dir + herdr session
+# names + the verbs. Session names come straight from herdr rather than through
+# `hs`, so Tab keeps working while hs is being redeployed; if herdr is missing or
+# erroring, completion quietly degrades to directories instead of breaking.
+_hs_complete() {
+  local cur="${COMP_WORDS[COMP_CWORD]}" prev="" json names verbs
+  [ "$COMP_CWORD" -gt 1 ] && prev="${COMP_WORDS[COMP_CWORD-1]}"
+  verbs="s switch attach x stop k kill rm delete ls list -n -h"
+  json="$(herdr session list --json 2>/dev/null)" || json=""
+  if [ -n "$json" ]; then
+    # `hs rm` only accepts a stopped session, so offer only those.
+    case "$prev" in
+      rm|delete) names="$(printf '%s' "$json" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+print("\n".join(s.get("name","") for s in d.get("sessions",[]) if not s.get("running")))' 2>/dev/null)" ;;
+      *)         names="$(printf '%s' "$json" | python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+print("\n".join(s.get("name","") for s in d.get("sessions",[])))' 2>/dev/null)" ;;
+    esac
+  else
+    names=""
+  fi
+  case "$prev" in
+    rm|delete|s|switch|attach|x|stop|k|kill) verbs="" ;;
+  esac
+  mapfile -t COMPREPLY < <(printf '%s\n' \
+    $(compgen -d -- "$cur") \
+    $(compgen -W "$names" -- "$cur") \
+    $(compgen -W "$verbs" -- "$cur") | awk 'NF && !seen[$0]++')
+}
+complete -o filenames -F _hs_complete hs
 # <<< remote-vs-code auto-attach mux <<<
 RC
 chown "$DEV_USER:$DEV_USER" "$RC"
 echo "installed VS-Code-only auto-attach block (+ cs completion) in $RC"
+
+if [ -n "${HS_COMPLETE_COPY:-}" ]; then
+  install -d -m 0755 "$(dirname "$HS_COMPLETE_COPY")"
+  emit_hs_complete > "$HS_COMPLETE_COPY"
+  echo "copied hs completion to $HS_COMPLETE_COPY"
+fi
