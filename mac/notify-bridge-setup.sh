@@ -57,10 +57,16 @@ cat > "$NOTIFY_DIR/click.sh" <<'CLICK'
 #!/bin/bash
 # Notification click action: focus the Ghostty tab attached to the notifying tmux
 # session, else open the url (native VS Code). args: <b64 url> <b64 session>.
-# The VM's tmux titles every client "<session> · <host>" (set-titles, config/tmux.conf),
-# so a prefix match on "<session> · " finds the right tab — and misses entirely when the
-# session only lives in a VS Code terminal, which is exactly the fallback case. Needs
-# Ghostty >= 1.3.1 for the AppleScript dictionary (a 1.3 preview API — revisit on 1.4).
+# The VM titles every client with the session name in it: tmux as "<session> · <host>"
+# (set-titles, config/tmux.conf), herdr as "<session> · …" or "<session>/<space> …"
+# (deploy/69-herdr-title.sh). Matching on CONTAINS, not "starts with": mosh prepends
+# "[mosh] " to any title it forwards, so a prefix match silently failed over mosh even
+# for tmux — it only ever worked over plain ssh. Both delimiters are checked so a herdr
+# session showing a second space ("<session>/<space>") still matches.
+# The match misses entirely when the session only lives in a VS Code terminal, which is
+# exactly the fallback case. Needs Ghostty >= 1.3.1 for the AppleScript dictionary (a 1.3
+# preview API — revisit on 1.4). An explicit repeat rather than a compound `whose` clause,
+# because that dictionary is a preview and its filter semantics aren't worth leaning on.
 dec() { [ -n "$1" ] && printf '%s' "$1" | base64 -D 2>/dev/null || true; }
 url="$(dec "$1")"; sess="$(dec "$2")"
 if [ -n "$sess" ] && pgrep -xiq ghostty; then
@@ -68,12 +74,19 @@ if [ -n "$sess" ] && pgrep -xiq ghostty; then
   # If several tabs show the session (stale title after a detach), first match wins.
   if /usr/bin/osascript - "$sess" >/dev/null 2>&1 <<'OSA'
 on run argv
-	set sessPrefix to (item 1 of argv) & " · "
+	set sess to item 1 of argv
+	set dotForm to sess & " · "
+	set slashForm to sess & "/"
 	tell application "Ghostty"
-		set matches to every terminal whose name starts with sessPrefix
-		if (count of matches) is 0 then error "no tab attached to that session"
-		focus item 1 of matches
-		activate
+		repeat with t in terminals
+			set n to name of t
+			if n contains dotForm or n contains slashForm then
+				focus t
+				activate
+				return
+			end if
+		end repeat
+		error "no tab attached to that session"
 	end tell
 end run
 OSA

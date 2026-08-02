@@ -3,6 +3,7 @@
 # RUN ON: the VM (as root, or via run-remote.sh which sudo's).
 #   ./deploy/run-remote.sh __DEV_USER__@<vm> deploy/10-base.sh DEV_USER=__DEV_USER__
 set -euo pipefail
+source "$(dirname "$0")/lib.sh"
 
 DEV_USER="${DEV_USER:-__DEV_USER__}"
 
@@ -25,8 +26,10 @@ elif [ "$SWAP_GB" = "0" ]; then
   echo "   SWAP_GB=0 — skipping swap provisioning"
 else
   if [ "$SWAP_GB" = "auto" ]; then
-    ram_kib="$(awk '/^MemTotal:/{print $2}' /proc/meminfo)"
-    SWAP_GB=$(( (ram_kib + 1048575) / 1048576 ))   # KiB -> GiB, rounded up
+    # rvc_swap_policy_gib (lib.sh) is the single definition of this rule; the swap
+    # monitor (deploy/95) embeds the same function so the two cannot drift.
+    SWAP_GB="$(rvc_swap_policy_gib)"
+    [ "$SWAP_GB" -gt 0 ] 2>/dev/null || { echo "!! cannot read MemTotal — skipping swap" >&2; SWAP_GB=0; }
   fi
   echo "   creating /swapfile (${SWAP_GB} GiB, dd for xfs-safety)"
   dd if=/dev/zero of=/swapfile bs=1M count="$(( SWAP_GB * 1024 ))" status=none
@@ -37,6 +40,16 @@ else
   grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
   echo "   swap on: $(swapon --show --noheadings | tr '\n' ' ')"
 fi
+
+echo ">> inotify: raise the file-watcher limits (VS Code Remote-SSH ENOSPC)"
+# Sibling of the swapfile above: another kernel resource whose distro default is too small
+# for this box's actual workload. The default 8192 watches is exhausted by a workspace with
+# node_modules/.git plus a few reconnecting Remote-SSH windows, and the editor then stops
+# watching files with "ENOSPC: System limit for number of file watchers reached".
+# rvc_ensure_inotify_limits (deploy/lib.sh) never lowers a limit and never overwrites an
+# existing drop-in. Paired with files.watcherExclude in deploy/67-vscode-terminal-settings.sh,
+# which caps what VS Code asks to watch in the first place.
+rvc_ensure_inotify_limits
 
 echo ">> ensure dev user $DEV_USER exists with sudo"
 if ! id "$DEV_USER" >/dev/null 2>&1; then

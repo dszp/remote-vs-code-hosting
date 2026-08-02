@@ -56,10 +56,18 @@ if [ -n "$dir" ]; then
   url="vscode://vscode-remote/ssh-remote+${host}${vtarget}"
 fi
 title="Claude Code · $(hostname -s 2>/dev/null || echo devvm)"
-# tmux session Claude runs in — sent to the Mac (5th wire field) so the click handler
-# can focus a matching Ghostty tab (title "<session> · <host>", per config/tmux.conf
-# set-titles) before falling back to the vscode:// url. Reused for the push Terminal link.
-sess=""; [ -n "${TMUX:-}" ] && sess="$(tmux display-message -p '#S' 2>/dev/null)"
+# Multiplexer session Claude runs in — sent to the Mac (5th wire field) so the click
+# handler can focus a matching Ghostty tab before falling back to the vscode:// url.
+# Reused for the push Terminal link.
+#   tmux  -> title "<session> · <host>"  (config/tmux.conf set-titles)
+#   herdr -> title carries "<session> · " or "<session>/" (deploy/69-herdr-title.sh)
+# tmux keeps priority: a pane can sit inside both, and only one title is on the tab.
+# Without the herdr branch `sess` is empty under herdr, show.sh never wires up click.sh,
+# and every herdr notification falls straight through to vscode:// — which is exactly how
+# this behaved before deploy/69 existed.
+sess=""
+[ -n "${TMUX:-}" ] && sess="$(tmux display-message -p '#S' 2>/dev/null)"
+[ -z "$sess" ] && sess="${HERDR_SESSION:-}"
 
 b64() { printf '%s' "$1" | base64 -w0 2>/dev/null || printf '%s' "$1" | base64 | tr -d '\n'; }
 

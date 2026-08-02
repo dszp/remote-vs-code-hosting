@@ -79,8 +79,12 @@ nothing — and its socket API has no kick-client request.
 | throw it away entirely | `cs k` | `hs k` |
 | boot other clients off | `cs d` | not needed |
 
-## From the Mac (helpers in `~/.zshrc`)
-- `devx` — **new** independent session (= `ssh -t __VM_NAME__ cs -n`)
+## From the Mac (helpers in `~/.zshrc` — source: `config/shell-helpers.sh`)
+- `dv` — mosh in via `__VM_NAME__` (= `mosh __VM_NAME__`); 1Password agent → TouchID prompt
+- `da` — same VM via the silent `__VM_SSH_ALIAS__` key, **no prompt** (= `mosh __VM_SSH_ALIAS__`)
+  - under mosh the ssh channel closes after bootstrap, so *neither* forwards the agent or the op/notify sockets (`__VM_NAME__-fwd` does that) — the only difference is the prompt
+  - needs UDP 60000-61000: fine over Tailscale, not over Cloudflare Access → there use `ssh __VM_NAME__-cf`
+- `devx` — **new** independent session (= `ssh -t __VM_NAME__ cs -n`; `DEVX_HOST=__VM_SSH_ALIAS__` to skip the prompt)
 - `devx <name>` — reattach/create a named session
 - `devsh` — quick **non-tmux** scratch shell on the VM
 - `ssh __VM_NAME__ cs ls` — list sessions without attaching

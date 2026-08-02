@@ -1,6 +1,30 @@
 # Laptop shell helpers for the dev VM. Append to ~/.zshrc (zsh shown; tweak for bash).
 # Pairs with the '__VM_SSH_ALIAS__' silent SSH host (mac/vm-alias-key-setup.sh).
 
+# Main interactive shell on the VM, over mosh (survives sleep, IP changes and a closed lid;
+# the VM's ~/.bashrc auto-attaches the tmux session, so a dropped link loses nothing).
+#   dv -> host '__VM_NAME__': keys via the 1Password SSH agent — a TouchID prompt per connect.
+#   da -> host '__VM_SSH_ALIAS__':  dedicated passphrase-less key + IdentityAgent none — silent.
+# Same VM, same tmux sessions; pick by whether you want the prompt. Under mosh that really is
+# the only difference: mosh closes the ssh channel once mosh-server is up, so neither host's
+# ForwardAgent nor its RemoteForward survives into the session. The always-on '__VM_NAME__-fwd'
+# LaunchAgent (mac/forward-agent-setup.sh) is what keeps the op/notify sockets live — that is
+# why mosh doesn't cost you TouchID secrets or notifications on the VM.
+# Needs UDP 60000-61000 end to end: Tailscale carries it, the Cloudflare Access path does not
+# (there, fall back to `ssh __VM_NAME__-cf`).
+alias dv='mosh __VM_NAME__'
+alias da='mosh __VM_SSH_ALIAS__'
+
+# Extra INDEPENDENT tmux session on the VM — won't mirror your main one:
+#   devx        new session ('folder-2', …)
+#   devx work   reattach/create one named 'work'
+# These use ssh (not mosh) because they run a one-shot command; set DEVX_HOST=__VM_SSH_ALIAS__ to use
+# the silent key and skip the agent prompt, at the cost of agent forwarding on the VM.
+devx() { ssh -t "${DEVX_HOST:-__VM_NAME__}" cs "${1:--n}"; }
+
+# Quick NON-tmux scratch shell on the VM (nothing to detach from, nothing left running):
+devsh() { ssh -t "${DEVX_HOST:-__VM_NAME__}" 'NO_AUTO_TMUX=1 bash -l'; }
+
 # Open a VM workspace folder in a NEW VS Code window via Remote-SSH (silent '__VM_SSH_ALIAS__').
 #   rcode | rcode .  -> /home/__DEV_USER__/workspace/<current local folder name>
 #   rcode myproj     -> /home/__DEV_USER__/workspace/myproj

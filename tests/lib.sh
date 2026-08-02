@@ -1,5 +1,14 @@
 # Shared assertions for the repo's shell tests. Source, don't execute.
 # Deliberately no `set -e`: a failing assertion must record and continue.
+
+# This repo is normally worked on from INSIDE a herdr pane, and herdr exports these into
+# every pane it spawns. `hs` refuses to launch when it sees them (guard_nesting), so an
+# inherited value made test-hs-launch/test-hs-verbs fail with "already inside herdr" for
+# anyone running the suite from their editor. Scrub the INHERITED values here, once, for
+# every test file. Tests that exercise the nesting guard set these per-invocation
+# (`HERDR_PANE_ID=wA:p1 bash "$HSABS"`), which this does not affect.
+unset HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH HERDR_TAB_ID HERDR_WORKSPACE_ID \
+      HERDR_ENV RVC_MUX_ACTIVE
 TESTS_RUN=0
 TESTS_FAILED=0
 
