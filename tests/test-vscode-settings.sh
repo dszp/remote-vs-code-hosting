@@ -115,6 +115,28 @@ HOME_DIR="$TMP/home" DEV_USER="$(id -un)" bash "$SCRIPT" >"$TMP/out2" 2>&1
 is   "second run: file byte-for-byte unchanged" "$(cat "$(NATIVE)")" "$before"
 like "second run: says no change"               "$(cat "$TMP/out2")" "no change"
 
+# --- hideOnStartup: the panel must not come up on window open ------------------------
+run_script
+is "hideOnStartup inserted" "$(jget "$(NATIVE)" 'terminal.integrated.hideOnStartup')" "always"
+# A hand-set value must survive, like every other key this script merges.
+run_script '{ "terminal.integrated.hideOnStartup": "never" }'
+is "hideOnStartup: hand-set value respected" \
+   "$(jget "$(NATIVE)" 'terminal.integrated.hideOnStartup')" "never"
+
+# --- server-env-setup: the reconnection grace time -----------------------------------
+ENVF="$TMP/home/.vscode-server/server-env-setup"
+run_script
+if [ -f "$ENVF" ]; then ok "server-env-setup created"; else fail "server-env-setup created" "missing $ENVF"; fi
+like "grace time is 16h in ms" "$(cat "$ENVF")" "VSCODE_RECONNECTION_GRACE_TIME=57600000"
+# It is SOURCED by Remote-SSH before the server starts — anything on stdout corrupts
+# the connection handshake, so silence is the load-bearing property here.
+is "server-env-setup is silent on stdout" "$(bash -c ". '$ENVF'")" ""
+is "it actually exports the variable" \
+   "$(bash -c ". '$ENVF'; printf %s \"\$VSCODE_RECONNECTION_GRACE_TIME\"")" "57600000"
+# Overridable, so a shorter window can be chosen without editing the script.
+GRACE_MS=3600000 HOME_DIR="$TMP/home" DEV_USER="$(id -un)" bash "$SCRIPT" >/dev/null 2>&1
+like "GRACE_MS override honored" "$(cat "$ENVF")" "GRACE_TIME=3600000"
+
 # --- the result is always valid JSONC ------------------------------------------------
 run_script '{ "editor.fontSize": 14 }'
 if jget "$(NATIVE)" >/dev/null 2>&1; then ok "output parses as JSONC"
