@@ -278,7 +278,7 @@ timer (errata-driven — only advisory-flagged packages apply). A second daily t
   your phone. `NOTIFY_PUSH_MODE` (`off`/`always`/`fallback`, default `fallback`) is shared with **B**.
 
 Test without waiting for a real pending reboot:
-`sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ /home/__DEV_USER__/.notify/reboot-check.sh` — it only sends if a
+`sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ /usr/local/bin/reboot-check.sh` — it only sends if a
 reboot is genuinely pending, so temporarily flip the `-r` guard to force one.
 
 **F. Remote→local clipboard (OSC 52) + Claude Code mouse.** Copy text on the VM and have it
@@ -310,7 +310,7 @@ Mac desktop notification when connected, push (Pushover/ntfy) when offline.
 `Environment=` line in the service or by editing the script. `NOTIFY_PUSH_MODE` is shared with **B**/**E**.
 
 Test without waiting for real pressure (forces one send, then clears state):
-`sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ SWAP_HIGH_PCT=0 NOTIFY_PUSH_MODE=always /home/__DEV_USER__/.notify/swap-check.sh; rm -f /home/__DEV_USER__/.notify/swap-check.state`
+`sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ SWAP_HIGH_PCT=0 NOTIFY_PUSH_MODE=always /usr/local/bin/swap-check.sh; rm -f /home/__DEV_USER__/.notify/swap-check.state`
 
 **H. Always-on forward carrier for `op` + notify.** The op proxy (**mac** mode) and the notify
 bridge (**B**) only work while a *live* Mac→VM SSH connection holds their `RemoteForward`'d

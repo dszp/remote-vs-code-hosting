@@ -49,8 +49,14 @@ systemctl enable --now dnf-automatic.timer
 # ---- 2) per-user reboot-pending notifier (reuses the ~/.notify bridge + push.env) -------
 install -d -o "$DEV_USER" -g "$DEV_USER" -m 700 "$HOME_DIR/.notify"
 
-log "writing $HOME_DIR/.notify/reboot-check.sh"
-cat > "$HOME_DIR/.notify/reboot-check.sh" <<'CHK'
+# Same reasoning as deploy/95: the check script lives in /usr/local/bin, NOT under $HOME.
+# SELinux is enforcing and a home directory is user_home_t, which init_t may not execute, so
+# a system unit pointed into ~/.notify dies at 203/EXEC before User= is applied — while the
+# identical file runs fine by hand from a login shell (unconfined_t), which hides it.
+# /usr/local/bin resolves to bin_t. ~/.notify stays the bridge: sockets, push.env, state.
+REBOOT_CHECK="/usr/local/bin/reboot-check.sh"
+log "writing $REBOOT_CHECK"
+cat > "$REBOOT_CHECK" <<'CHK'
 #!/bin/bash
 # Notify when a reboot is pending after security updates. Mirrors the Claude attention hook:
 # try the Mac desktop notifier first over the SSH RemoteForward sockets (~/.notify/mac*.sock —
@@ -126,8 +132,26 @@ elif [ -n "${NTFY_URL:-}" ]; then
 fi
 exit 0
 CHK
-chmod 700 "$HOME_DIR/.notify/reboot-check.sh"
-chown "$DEV_USER:$DEV_USER" "$HOME_DIR/.notify/reboot-check.sh"
+chmod 755 "$REBOOT_CHECK"
+chown root:root "$REBOOT_CHECK"
+# Restore explicitly so a script moved here from $HOME cannot keep a stale user_home_t label.
+command -v restorecon >/dev/null 2>&1 && restorecon -F "$REBOOT_CHECK" || :
+
+# Retire the pre-move artifacts: the old home-directory copy (nothing executes it, but it is
+# where the docs used to point) and any hand-made user-level timer added as a workaround
+# while the system unit was silently failing. Both firing means every alert arrives twice.
+rm -f "$HOME_DIR/.notify/reboot-check.sh"
+uid="$(id -u "$DEV_USER")"
+for u in reboot-notify.timer reboot-notify.service; do
+  f="$HOME_DIR/.config/systemd/user/$u"
+  [ -e "$f" ] || continue
+  runuser -u "$DEV_USER" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+    systemctl --user disable --now "$u" >/dev/null 2>&1 || :
+  rm -f "$f"
+  log "removed stale user-level $u (superseded by the system unit)"
+done
+runuser -u "$DEV_USER" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+  systemctl --user daemon-reload >/dev/null 2>&1 || :
 
 # ---- 3) system timer that runs the per-user check daily ---------------------------------
 log "installing reboot-notify.service + .timer (runs as $DEV_USER)"
@@ -139,7 +163,7 @@ Description=Notify when a reboot is pending after security updates
 Type=oneshot
 User=$DEV_USER
 Environment=HOME=$HOME_DIR
-ExecStart=$HOME_DIR/.notify/reboot-check.sh
+ExecStart=$REBOOT_CHECK
 UNIT
 
 cat > /etc/systemd/system/reboot-notify.timer <<'UNIT'
@@ -160,4 +184,4 @@ systemctl enable --now reboot-notify.timer
 
 ok "auto-updates active: security updates daily (no auto-reboot); reboot-pending alert armed."
 log "alert uses the same ~/.notify bridge as Claude: Mac desktop when connected, push when offline."
-log "test now (only sends if a reboot is genuinely pending):  sudo -u $DEV_USER HOME=$HOME_DIR $HOME_DIR/.notify/reboot-check.sh"
+log "test now (only sends if a reboot is genuinely pending):  sudo -u $DEV_USER HOME=$HOME_DIR $REBOOT_CHECK"
