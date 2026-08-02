@@ -15,14 +15,25 @@ symlinks outright, so a symlink farm would sync nothing.
 - `pvault list` — what's published + mount state · `pvault apply` — reconcile mounts to config
 - `pvault add <src> [vault-path]` — publish a folder OR a single file, and mount it now
 - `pvault rm <src>` — stop publishing it · `pvault sync` — force a pull+push
-- `pvault check` — list published files that sync as **attachments**. ⚠ Anything not
-  `.md`/`.canvas`/`.base` is an attachment, and if the server's allowlist rejects even one,
-  the **entire push fails** (`attachment extension not allowed`) and nothing syncs — plans
-  included. The CLI has no ignore mechanism and does **not** honor the vault's
-  "Sync attachments"/"Attachment exclusions" settings (those are plugin-side), so the mount
-  list is the only filter: publish `.md` files, or folders that contain only markdown.
-  `pvault add` warns up front. Symptom if you miss it: sync silently stops, journal shows
-  the error — `journalctl --user -u pvault-pull.service`.
+- `pvault check` — the live **attachment policy** plus the published files it filters out.
+  Anything not `.md`/`.canvas`/`.base` is an *attachment*, and rtmd 0.1.0+ filters them
+  per bound folder (stored as `attachmentSync` in `~/vaults/plans/.rtmd`):
+
+  ```bash
+  rtmd config attachments                        # show the current policy
+  rtmd config attachments off                    # ignore every attachment
+  rtmd config attachments on --include "**/*.html,assets/**"
+  rtmd config attachments on --all               # sync everything (the old behaviour)
+  ```
+  **This host publishes `**/*.html`.** Ignored files are never uploaded, downloaded, or
+  deleted — which is what lets whole repo folders be bound instead of markdown files one
+  at a time. Two traps: ignoring is **silent** (a `.pdf` in a bound folder simply never
+  appears, nothing warns you), and `rtmd ls` still *lists* ignored files with their
+  classified kind — use `rtmd attach ls` to see what is actually on the server.
+  ⚠ Under `--all`, one extension the server's allowlist rejects fails the **entire push**
+  and nothing syncs, plans included; symptom is a silent stall with the error in
+  `journalctl --user -u pvault-pull.service`. This is CLI-side and unrelated to the vault's
+  own "Sync attachments"/"Attachment exclusions" settings in Obsidian, which are plugin-side.
 - A **vault-path may contain spaces** (`REPORTS/Monthly Invoice Review`); the source may not.
   Parsing splits on the first whitespace run only.
 - `pvault link <path>` — clickable Obsidian permalink (`https://.../n/<guid>`) for a repo
@@ -41,8 +52,9 @@ symlinks outright, so a symlink farm would sync nothing.
   permalink: https://realtime.__BASE_DOMAIN__/n/<guid>
   ---
   ```
-  All 64 existing files across the ten published projects are backfilled; write new ones
-  the same way. `permalink` survives content edits — the guid is keyed to the note's path.
+  79 files across the published projects are backfilled; write new ones the same way.
+  `permalink` survives content edits — the guid is keyed to the note's path. Folders bound
+  wholesale (reports, not plans) are not stamped.
 - Config: `~/.config/remote-vs-code/plans-vault.conf` (`<source> [<vault-path>]`; source is
   relative to `~/workspace`). Give a vault-path to flatten a deep source.
 - Push is **event-driven** (inotify on the vault, ~5s); pull is a **60s timer**
@@ -51,9 +63,11 @@ symlinks outright, so a symlink farm would sync nothing.
   empty, and rtmd would read that as "delete every file". `pvault apply` fixes it.
 - Not published: git worktrees (same files on another branch) and third-party checkouts.
   `pvault add` warns about both but lets you override.
-- Needs `rtmd` on PATH (install from npm once it ships; until then build from source —
-  build the SDK **before** the CLI, or esbuild can't resolve `@realtime-md/sdk`; see the
-  header of `deploy/72-plans-vault.sh`).
+- Needs `rtmd` on PATH: **`npm i -g @realtime-md/cli`** (published 2026-08-02; upgrade with
+  `@latest`). It stays wrapped as `~/.local/bin/rtmd` because npm's own `rtmd` symlink and
+  its `#!/usr/bin/env node` shebang are both pinned to one nvm node version that a systemd
+  user unit's PATH can't see — the wrapper picks the newest node that actually has the
+  package. `rtmd whoami` prints the bound **vault id**.
 
 ## Multiplexer: tmux or herdr (`mux` on the VM)
 Two multiplexers coexist as peers — never nest them. tmux is the default and the one VS Code
