@@ -74,6 +74,17 @@ like "rm refuses unknown entry" "$(pv rm C/docs)"         "not configured"
 like "rm matches source, not vault-path" "$(pv rm A/docs)" "removed A/docs"
 is   "config down to one entry"          "$(pv mountpoints | wc -l)" "1"
 
+# --- link / where: the repo <-> vault mapping -------------------------------
+# The mapping is NOT mechanical (a vault-path override collapses levels), which is
+# the whole reason these verbs exist. `where` needs no rtmd, so it is testable here.
+printf 'A/docs   A\nB/f.md\n' > "$TMP/conf"
+is "where: dir mount root -> source"  "$(pv where A)"          "$TMP/ws/A/docs"
+is "where: file inside a mount"       "$(pv where A/x/y.md)"   "$TMP/ws/A/docs/x/y.md"
+is "where: a file entry"              "$(pv where B/f.md)"     "$TMP/ws/B/f.md"
+like "where: refuses an unpublished path" "$(pv where Nope/z.md)" "not a published vault path"
+# link resolves the mapping BEFORE it needs rtmd, so the refusal is testable too.
+like "link: refuses an unpublished path"  "$(pv link "$TMP/ws/elsewhere.md")" "not published"
+
 # --- guards are advisory, not fatal -----------------------------------------
 # A third-party origin should WARN but still add: the call is the user's.
 mkdir -p "$TMP/ws/D/docs"; git -C "$TMP/ws/D" init -q
