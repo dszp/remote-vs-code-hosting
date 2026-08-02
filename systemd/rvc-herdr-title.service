@@ -1,0 +1,23 @@
+# Reference only — deploy/69-herdr-title.sh writes the rendered unit (with the real
+# DEV_USER) to /etc/systemd/system and enables it. Shown here for hand-management.
+#
+# One daemon serves EVERY herdr session: it rescans ~/.config/herdr for session sockets
+# every 5s, so there is no per-session unit and nothing to trigger when you start one.
+# It only uses the versioned herdr socket API (events.subscribe +
+# client.window_title.set), so a herdr auto-update can't silently break it.
+#
+#   journalctl -u rvc-herdr-title -f     # what it is doing
+#   systemctl restart rvc-herdr-title    # pick up ~/.config/rvc/herdr-title.toml edits
+[Unit]
+Description=herdr session state in the terminal tab title
+After=network.target
+
+[Service]
+Type=simple
+User=__DEV_USER__
+ExecStart=/usr/bin/python3 /usr/local/lib/remote-vs-code/herdr-title.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -79,6 +79,18 @@ FRESH_JSON=$(cat <<'JSONC'
   "terminal.integrated.persistentSessionReviveProcess": "never",
   // Pass right-click to the terminal app (herdr's own tab menu) instead of VS Code's.
   "terminal.integrated.rightClickBehavior": "nothing",
+  // Cap what the file watcher tracks — the VS Code half of the ENOSPC fix. The other
+  // half raises fs.inotify.max_user_watches (deploy/10-base.sh). NOTE the glob is
+  // "**/.git/objects/**", NOT "**/.git/**": excluding all of .git kills live SCM
+  // decorations in the editor. Add your own globs freely; the deploy script only
+  // inserts the ones below when they are missing and never rewrites yours.
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.git/objects/**": true,
+    "**/dist/**": true,
+    "**/.next/**": true,
+    "**/build/**": true
+  },
   "terminal.integrated.profiles.linux": {
     "shell (no tmux)": {
       "path": "bash",
@@ -113,6 +125,7 @@ path = pathlib.Path(sys.argv[1])
 raw = path.read_text()
 
 PROFILE_KEY = "terminal.integrated.profiles.linux"
+WATCH_KEY = "files.watcherExclude"
 
 # Top-level scalar settings this script owns.
 WANT_TOP = {
@@ -134,6 +147,23 @@ PROFILES = {
     "herdr": '{\n      "path": "bash",\n      "args": ["-l"],\n      "env": { "RVC_AUTO_MUX": "herdr" }\n    }',
     "tmux: folder session": '{\n      "path": "bash",\n      "args": ["-l"],\n      "env": { "RVC_AUTO_MUX": "tmux" }\n    }',
 }
+
+# Glob -> inserted value text. The VS Code half of the ENOSPC fix (the kernel half is
+# rvc_ensure_inotify_limits in deploy/lib.sh). "**/.git/objects/**" is deliberately
+# narrower than "**/.git/**": excluding all of .git kills live SCM decorations.
+WATCH_GLOBS = {
+    "**/node_modules/**": "true",
+    "**/.git/objects/**": "true",
+    "**/dist/**": "true",
+    "**/.next/**": "true",
+    "**/build/**": "true",
+}
+
+# Every key whose VALUE is an object we merge into entry-by-entry, rather than a scalar
+# we either set or leave alone. Entries missing from an existing object are inserted;
+# entries already there — including hand-added ones — are never touched.
+NESTED = {PROFILE_KEY: PROFILES, WATCH_KEY: WATCH_GLOBS}
+NESTED_LABEL = {PROFILE_KEY: "terminal profiles", WATCH_KEY: "watcher excludes"}
 
 
 def strip_comments(s):
@@ -184,13 +214,31 @@ if not isinstance(data, dict):
     print(f"!! {path}: top level is not an object — NOT modifying", file=sys.stderr)
     sys.exit(1)
 
-existing_profiles = data.get(PROFILE_KEY) if isinstance(data.get(PROFILE_KEY), dict) else None
-missing_profiles = [p for p in PROFILES if not (existing_profiles and p in existing_profiles)]
-missing_top = [k for k in WANT_TOP if k not in data]
-need_profile_key = PROFILE_KEY not in data
+# Present-and-an-object, per nested key. A key present but NOT an object is somebody's
+# deliberate override of the whole thing (or a mistake); either way this script must not
+# try to splice entries into it, so it is skipped and reported.
+existing_nested = {}
+unmergeable = []
+for key in NESTED:
+    if key not in data:
+        existing_nested[key] = None
+    elif isinstance(data[key], dict):
+        existing_nested[key] = data[key]
+    else:
+        unmergeable.append(key)
+for key in unmergeable:
+    print(f"!! {path}: {key!r} is not an object — leaving it alone", file=sys.stderr)
 
-if not missing_top and not missing_profiles:
-    print(f">> {path}: all {len(WANT_TOP)} settings + {len(PROFILES)} profiles already present — no change")
+mergeable = [k for k in NESTED if k not in unmergeable]
+missing_nested = {
+    k: [n for n in NESTED[k] if not (existing_nested[k] and n in existing_nested[k])]
+    for k in mergeable
+}
+missing_top = [k for k in WANT_TOP if k not in data]
+
+if not missing_top and not any(missing_nested.values()):
+    counts = " + ".join(f"{len(NESTED[k])} {NESTED_LABEL[k]}" for k in NESTED)
+    print(f">> {path}: all {len(WANT_TOP)} settings + {counts} already present — no change")
     sys.exit(0)
 
 
@@ -201,21 +249,21 @@ def insert_after_brace(text, at, block):
 
 new = raw
 
-# 1. Missing whole profiles key, or missing individual profiles inside an existing one.
-if need_profile_key:
-    body = ",\n".join(f'    "{name}": {PROFILES[name]}' for name in PROFILES)
-    block = f'\n  "{PROFILE_KEY}": {{\n{body}\n  }},'
-    top = new.index("{")
-    new = insert_after_brace(new, top, block)
-    added_profiles = list(PROFILES)
-elif missing_profiles:
-    kpos = new.index(f'"{PROFILE_KEY}"')
-    brace = new.index("{", kpos + len(PROFILE_KEY))
-    body = ",\n".join(f'    "{name}": {PROFILES[name]}' for name in missing_profiles)
-    new = insert_after_brace(new, brace, f"\n{body},")
-    added_profiles = missing_profiles
-else:
-    added_profiles = []
+# 1. For each nested key: add the whole key if absent, else splice the missing entries
+#    into the object that is already there.
+added_nested = {}
+for key in mergeable:
+    miss = missing_nested[key]
+    if not miss:
+        continue
+    body = ",\n".join(f'    "{name}": {NESTED[key][name]}' for name in miss)
+    if existing_nested[key] is None:
+        new = insert_after_brace(new, new.index("{"), f'\n  "{key}": {{\n{body}\n  }},')
+    else:
+        kpos = new.index(f'"{key}"')
+        brace = new.index("{", kpos + len(key))
+        new = insert_after_brace(new, brace, f"\n{body},")
+    added_nested[key] = miss
 
 # 2. Missing top-level scalar settings.
 for k in missing_top:
@@ -228,24 +276,29 @@ try:
 except Exception as e:
     print(f"!! {path}: generated file does not parse ({e}) — NOT writing", file=sys.stderr)
     sys.exit(1)
-if PROFILE_KEY not in check or any(k not in check for k in WANT_TOP):
+if any(k not in check for k in WANT_TOP):
     print(f"!! {path}: generated file missing expected keys — NOT writing", file=sys.stderr)
     sys.exit(1)
-for name in PROFILES:
-    if name not in check[PROFILE_KEY]:
-        print(f"!! {path}: generated file missing profile {name!r} — NOT writing", file=sys.stderr)
+for key in mergeable:
+    if not isinstance(check.get(key), dict):
+        print(f"!! {path}: generated file missing {key!r} — NOT writing", file=sys.stderr)
         sys.exit(1)
-# Nothing that already existed may have changed value.
+    for name in NESTED[key]:
+        if name not in check[key]:
+            print(f"!! {path}: generated file missing {key} entry {name!r} — NOT writing", file=sys.stderr)
+            sys.exit(1)
+# Nothing that already existed may have changed value. Nested keys are compared
+# entry-by-entry below, since adding an entry legitimately changes the object.
 for k, v in data.items():
-    if k == PROFILE_KEY:
+    if k in NESTED:
         continue
     if check.get(k) != v:
         print(f"!! {path}: key {k!r} would change value — NOT writing", file=sys.stderr)
         sys.exit(1)
-if existing_profiles:
-    for k, v in existing_profiles.items():
-        if check[PROFILE_KEY].get(k) != v:
-            print(f"!! {path}: profile {k!r} would change — NOT writing", file=sys.stderr)
+for key in mergeable:
+    for k, v in (existing_nested[key] or {}).items():
+        if check[key].get(k) != v:
+            print(f"!! {path}: {key} entry {k!r} would change — NOT writing", file=sys.stderr)
             sys.exit(1)
 
 bak = path.with_suffix(path.suffix + ".bak." + time.strftime("%Y%m%d%H%M%S"))
@@ -255,8 +308,8 @@ path.write_text(new)
 what = []
 for k in missing_top:
     what.append(f"{k}={WANT_TOP[k]}")
-if added_profiles:
-    what.append("profiles: " + ", ".join(repr(p) for p in added_profiles))
+for key, names in added_nested.items():
+    what.append(f"{key}: " + ", ".join(repr(n) for n in names))
 print(f">> {path}: added {'; '.join(what)} (backup: {bak.name})")
 PY
 }
@@ -271,7 +324,7 @@ ensure_setting() {
   if [ ! -s "$f" ]; then
     printf '%s\n' "$FRESH_JSON" > "$f"
     chown "$DEV_USER:$DEV_USER" "$f"; chmod 644 "$f"
-    echo ">> $f: created with 2 settings + 4 terminal profiles"
+    echo ">> $f: created with 2 settings + 5 watcher excludes + 4 terminal profiles"
     return
   fi
 

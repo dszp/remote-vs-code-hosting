@@ -22,6 +22,7 @@ HOME_DIR="/home/$DEV_USER"
 install -d -o "$DEV_USER" -g "$DEV_USER" -m 700 "$HOME_DIR/.notify"
 
 log "writing $HOME_DIR/.notify/swap-check.sh"
+SWAP_CHECK="$HOME_DIR/.notify/swap-check.sh"
 cat > "$HOME_DIR/.notify/swap-check.sh" <<'CHK'
 #!/bin/bash
 # Notify when swap usage is high — an early warning for the memory pressure that OOM-killed
@@ -42,6 +43,8 @@ ENV_FILE="$HOME/.notify/push.env"
 # shellcheck disable=SC1090
 [ -f "$ENV_FILE" ] && . "$ENV_FILE"
 [ -n "$_mode_override" ] && NOTIFY_PUSH_MODE="$_mode_override"
+
+# __RVC_SWAP_FNS__   (spliced in below from deploy/lib.sh — do not hand-edit)
 
 HIGH_PCT="${SWAP_HIGH_PCT:-50}"           # alert when used% >= this
 REARM_PCT="${SWAP_REARM_PCT:-25}"         # clear alert state when used% drops below this
@@ -74,6 +77,13 @@ moshhost="${BLINK_MOSH_HOST:-__VM_NAME__}"
 gib() { awk "BEGIN{printf \"%.1f\", $1/1024}"; }
 title="Swap high · $host"
 text="Swap ${pct}% used ($(gib "$sw_used")/$(gib "$sw_total") GiB). Memory pressure building — close some claude sessions before it OOMs."
+# Is the swapfile itself below policy? deploy/10-base.sh never resizes existing swap, so
+# a RAM upgrade leaves it undersized with nothing to say so. Only mentioned when we are
+# already alerting, so it adds no new nag of its own.
+want_g="$(rvc_swap_policy_gib)"; have_g="$(rvc_swap_total_gib)"
+if [ "${want_g:-0}" -gt 0 ] 2>/dev/null && [ "${have_g:-0}" -lt "${want_g:-0}" ] 2>/dev/null; then
+  text="$text Swap is ${have_g}G but policy wants ${want_g}G for this box's RAM — add a second swapfile (safe) rather than swapoff (would page it all back into RAM)."
+fi
 
 b64() { printf '%s' "$1" | base64 -w0 2>/dev/null || printf '%s' "$1" | base64 | tr -d '\n'; }
 
@@ -125,6 +135,17 @@ elif [ -n "${NTFY_URL:-}" ]; then
 fi
 exit 0
 CHK
+# Splice in the SAME BYTES as deploy/lib.sh rather than a second copy of the rule: the
+# provisioning policy (deploy/10) and this check must never be able to disagree.
+fns="$(declare -f rvc_swap_policy_gib rvc_swap_total_gib)"
+awk -v fns="$fns" '$0 == "# __RVC_SWAP_FNS__   (spliced in below from deploy/lib.sh — do not hand-edit)" { print fns; next } { print }' \
+  "$SWAP_CHECK" > "$SWAP_CHECK.tmp" && mv "$SWAP_CHECK.tmp" "$SWAP_CHECK"
+# Optional copy so the repo's test suite can diff these bytes against lib.sh.
+if [ -n "${SWAP_CHECK_COPY:-}" ]; then
+  install -d -m 0755 "$(dirname "$SWAP_CHECK_COPY")"
+  install -m 0644 "$SWAP_CHECK" "$SWAP_CHECK_COPY"
+  echo "copied swap-check to $SWAP_CHECK_COPY"
+fi
 chmod 700 "$HOME_DIR/.notify/swap-check.sh"
 chown "$DEV_USER:$DEV_USER" "$HOME_DIR/.notify/swap-check.sh"
 

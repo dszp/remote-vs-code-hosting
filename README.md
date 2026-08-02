@@ -240,10 +240,13 @@ future Claude Code build, grep the compiled binary (`strings` isn't installed on
 rg -a 'messageIdleNotifThresholdMs.{0,120}' ~/.nvm/versions/node/*/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
 ```
 
-**C. Laptop helpers.** `config/shell-helpers.sh` (append to `~/.zshrc`) adds `rcode [folder]`
-(open a VM workspace folder in a new Remote-SSH window) and `rpaste` (upload the clipboard image
-to the VM and copy back a path Claude can read — pasting a screenshot into a remote terminal only
-sends a local Mac path). For a screenshot hotkey, bind `mac/rpaste-upload.sh` in your launcher
+**C. Laptop helpers.** `config/shell-helpers.sh` (append to `~/.zshrc`) adds `dv`/`da` (mosh into
+the VM — `dv` via `__VM_NAME__` prompts the 1Password agent for TouchID, `da` via `__VM_SSH_ALIAS__` uses the
+silent key; same VM either way, and under mosh neither carries agent/socket forwarding, so the
+choice is just the prompt), `devx`/`devsh` (extra independent tmux session / non-tmux scratch
+shell), `rcode [folder]` (open a VM workspace folder in a new Remote-SSH window) and `rpaste`
+(upload the clipboard image to the VM and copy back a path Claude can read — pasting a screenshot
+into a remote terminal only sends a local Mac path). For a screenshot hotkey, bind `mac/rpaste-upload.sh` in your launcher
 (e.g. BetterTouchTool). **[manual]** A Finder **Quick Action** (Automator → "Quick Action" receiving
 folders → Run Shell Script) makes a right-click "Open in VS Code Remote":
 ```zsh
@@ -385,8 +388,9 @@ Day-to-day commands (also in [`CHEAT.md`](CHEAT.md)).
 - `cs` attaches with `-D` — a reconnect detaches the stale client, so no mirror/scroll-lock. reattach: `cs <name>` (VM) / `devx <name>` (Mac) · kill: `tmux kill-session -t <name>`
 - two clients fighting over one session? `tmux detach-client -a` drops every client **but yours** (never ends the session) · `tmux detach-client -t /dev/pts/N` drops one
 
-**From the Mac (helpers in `~/.zshrc`)**
-- `devx` new independent session · `devx <name>` reattach/create named · `devsh` non-tmux scratch shell · `ssh __VM_NAME__ cs ls` list
+**From the Mac (helpers in `~/.zshrc` — source: `config/shell-helpers.sh`)**
+- `dv` mosh in via `__VM_NAME__` (TouchID prompt from the 1Password agent) · `da` same VM via the silent `__VM_SSH_ALIAS__` key, no prompt — under mosh nothing is agent-forwarded either way, so pick on the prompt alone
+- `devx` new independent session · `devx <name>` reattach/create named · `devsh` non-tmux scratch shell · `ssh __VM_NAME__ cs ls` list · `DEVX_HOST=__VM_SSH_ALIAS__` for a silent `devx`/`devsh`
 
 **Multiple terminals**
 - more shells, one tab: tmux windows — `Ctrl-b c` new · `Ctrl-b n`/`p` or `0-9` switch · `Ctrl-b w` list
