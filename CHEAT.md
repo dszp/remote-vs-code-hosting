@@ -2,7 +2,7 @@
 
 ## Connect
 - `ssh __VM_NAME__` — lands in a **plain shell**; human logins are never auto-attached.
-  Ask for what you want: `mux` (current backend) · `cs [folder]` (tmux) · `herdr`.
+  Ask for what you want: `mux` / `hs` (this project, herdr) · `cs [folder]` (tmux) · `herdr`.
 - `mosh __VM_NAME__` — resilient over roaming / flaky links, then `mux`.
 - **VS Code:** Remote-SSH → `__VM_NAME__` (or `__VM_NAME__-cf` when off-tailnet) → open `~/workspace/<project>`.
 - **Any browser (incl. iPad):** `https://__CODE_HOSTNAME__` (Access → code-server password).
@@ -12,14 +12,21 @@ Two multiplexers coexist as peers — never nest them. tmux is the default and t
 integrated terminals auto-attach (so the Claude extension's terminal stays persistent); herdr
 is the agent-aware one, project-oriented, useful when several coding agents run at once.
 Moshi lists **both** backends' sessions in its picker.
-- `mux` — attach whichever backend the policy names · `mux tmux` / `mux herdr` — that one, now
-- `mux use <tmux|herdr|off>` — set the policy (what VS Code auto-attaches; `off` = plain shells)
+- `mux` — **this project's herdr session** (same as bare `hs`), whatever the policy says
+- `mux herdr [<name>|ws|default]` — this project (default) · a named session · herdr's shared
+  `default`. `mux tmux` — tmux, via `cs`
+- `mux use <tmux|herdr|off>` — the policy: what VS Code **auto-attaches** (`off` = plain
+  shells). It does **not** change what `mux` does — a command you typed on purpose shouldn't
+  depend on a setting you last touched weeks ago.
 - `mux status` — policy + session counts · policy file: `~/.config/remote-vs-code/mux.env`
 - **Prefix collision:** both use `Ctrl-b`. Harmless as peers; rebind before ever nesting.
 - herdr detach `Ctrl-b q` · panes survive in its server · `herdr integration status` shows the
   Claude hook (a no-op outside herdr panes — it only reports session identity)
-- **Sessions:** VS Code terminals get a session named after the `.code-workspace` (else the
-  project dir); a human login stays on `default` so the two never mirror. `herdr session list`
+- **Sessions:** named after the `.code-workspace` (else the project dir), and a subdir joins
+  its project's one session. `mux` / `hs` / VS Code auto-attach all derive the same name, so
+  they land together **on purpose** — every client on one session renders the same view
+  (herdr focus is session-level). Want an independent view? `mux herdr default` or bare
+  `herdr`. `herdr session list`
 - **Persist a named session across reboots:** `systemctl --user enable herdr-session@<name>.service`
   (template from `deploy/60-session-boot.sh`; `default` has its own unit). Use `enable` without
   `--now` when it is already running on demand — `start` would collide on its socket.

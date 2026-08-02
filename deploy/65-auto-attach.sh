@@ -65,6 +65,11 @@ CONF="$CONF_DIR/mux.env"
 emit_hs_complete() {
   sed -n '/^_hs_complete() {$/,/^complete -o filenames -F _hs_complete hs$/p' "$0"
 }
+# Same idea for `_mux_herdr` + `mux`, so tests/test-mux.sh sources the exact bytes
+# that land in ~/.bashrc instead of a copy that could drift.
+emit_mux() {
+  sed -n '/^_mux_herdr() {$/,/^}$/p;/^mux() {$/,/^}$/p' "$0"
+}
 
 # Remove any prior block so re-running updates cleanly. Both marker spellings:
 # the block was "...auto-attach tmux" before it grew a herdr mode.
@@ -228,26 +233,43 @@ if [[ $- == *i* && -z "$TMUX" && -z "${RVC_MUX_ACTIVE:-}" && -z "$NO_AUTO_TMUX" 
   esac
 fi
 
-# `mux` — one word to get a session, whichever backend you're currently on, so
-# muscle memory doesn't have to track which multiplexer you've settled on.
-#   mux                  launch per policy (herdr if selected, else tmux via `cs`)
-#   mux tmux | mux herdr  launch that one NOW without changing the policy
-#   mux use <tmux|herdr|off>   set the persistent policy (what VS Code auto-attaches)
-#   mux status           show the policy and what's running
-# Note `off` only disables AUTO-attach; bare `mux` still gives you tmux, since a
-# command you typed on purpose should do something. Want herdr occasionally
-# without making it the default? `mux herdr`.
-# Optional $1 = session name. Bare (no name) means the 'default' session on
-# purpose: VS Code auto-attach uses workspace-named sessions, and a human landing
-# on the same derived name would collide back into a mirrored view.
-# `mux herdr ws` opts in to the same name VS Code would pick for this directory.
+# `mux` — one word to get THIS PROJECT's session, so muscle memory doesn't have to
+# track which multiplexer you've settled on.
+#   mux                        this project's herdr session (same as bare `hs`)
+#   mux herdr [<name>|ws|default]
+#                              herdr: this project (default), a named session, or
+#                              herdr's shared `default` session
+#   mux tmux                   tmux, via `cs`
+#   mux use <tmux|herdr|off>   what VS Code AUTO-attaches — NOT what `mux` does
+#   mux status                 show the policy and what's running
+#
+# Bare `mux` is herdr-for-this-project whatever the policy says: `mux use` governs
+# AUTO-attach only, and a command you typed on purpose shouldn't change meaning
+# based on a setting you last touched weeks ago. It delegates to `hs` rather than
+# duplicating the launch — same `_rvc_ws_name`, and `hs` has the stronger nesting
+# guard (it checks HERDR_PANE_ID too, and names the keybind that switches spaces).
+# `_mux_herdr ws` is the fallback for a host with deploy/65 but not deploy/71.
+#
+# MIRRORING — the thing to know: herdr focus is a SESSION-level property, so every
+# client attached to one session renders the same view. Reaching this project's
+# session from both Ghostty and a VS Code terminal means moving in one moves the
+# other. `mux herdr default` (or bare `herdr`) is the way to an independent view.
+# Bare `mux herdr` used to mean `default` for exactly this reason, back when VS
+# Code auto-attached to workspace-named sessions and a human deriving the same
+# name would collide with it. With RVC_AUTO_MUX=off nothing creates those sessions
+# on its own, so that default was costing a keystroke every launch to guard a
+# collision you now have to make by hand.
 _mux_herdr() {
   if [ -n "${RVC_MUX_ACTIVE:-}" ]; then echo "already inside herdr" >&2; return 1; fi
   command -v herdr >/dev/null || { echo "mux: herdr is not installed" >&2; return 1; }
-  local n="${1:-}"
+  local n="${1:-ws}"
   [ "$n" = "ws" ] && n="$(_rvc_ws_name)"
-  if [ -n "$n" ]; then RVC_MUX_ACTIVE=herdr herdr --session "$n"
-  else RVC_MUX_ACTIVE=herdr herdr; fi
+  # herdr's default session is ~/.config/herdr/herdr.sock, while --session puts
+  # named ones under sessions/<name>/. There is no sessions/default, so
+  # `herdr --session default` would CREATE a second session that merely looks
+  # like the default — 'default' has to mean a bare `herdr`.
+  if [ "$n" = "default" ]; then RVC_MUX_ACTIVE=herdr herdr
+  else RVC_MUX_ACTIVE=herdr herdr --session "$n"; fi
 }
 mux() {
   local conf="$HOME/.config/remote-vs-code/mux.env" pol=""
@@ -273,9 +295,11 @@ mux() {
       else echo "herdr: not installed"; fi ;;
     tmux)  cs ;;
     herdr) _mux_herdr "${2:-}" ;;
-    "")    case "$pol" in herdr) _mux_herdr ;; *) cs ;; esac ;;
+    # This project's herdr session, whatever the policy says. `hs` when it is
+    # installed (deploy/71), else the equivalent inline path.
+    "")    if command -v hs >/dev/null; then hs; else _mux_herdr ws; fi ;;
     -h|--help|help)
-      echo "mux [tmux | herdr [<name>|ws]] | mux use <tmux|herdr|off> | mux status" ;;
+      echo "mux [tmux | herdr [<name>|ws|default]] | mux use <tmux|herdr|off> | mux status" ;;
     *) echo "usage: mux [tmux|herdr] | mux use <tmux|herdr|off> | mux status" >&2; return 2 ;;
   esac
 }
@@ -381,4 +405,10 @@ if [ -n "${HS_COMPLETE_COPY:-}" ]; then
   install -d -m 0755 "$(dirname "$HS_COMPLETE_COPY")"
   emit_hs_complete > "$HS_COMPLETE_COPY"
   echo "copied hs completion to $HS_COMPLETE_COPY"
+fi
+
+if [ -n "${MUX_COPY:-}" ]; then
+  install -d -m 0755 "$(dirname "$MUX_COPY")"
+  emit_mux > "$MUX_COPY"
+  echo "copied mux functions to $MUX_COPY"
 fi
