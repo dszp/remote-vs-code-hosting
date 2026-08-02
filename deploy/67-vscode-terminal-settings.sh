@@ -18,6 +18,19 @@
 # shells. Only the REVIVE path (process was actually killed) is disabled — exactly the
 # case that spawned the '-2'. Durable work lives in tmux/herdr, so it is unaffected.
 #
+# THE GRACE TIME: this script also writes ~/.vscode-server/server-env-setup, raising
+# VSCODE_RECONNECTION_GRACE_TIME from its 3h default to 16h. Past the grace window the
+# server disposes the parked session and the client can only offer "Reload Window" — so
+# every overnight lid-close cost a reload. Managed here rather than left hand-made
+# because it lives under ~/.vscode-server, which is precisely what a "delete it and let
+# it reinstall" fix wipes. See the section at the bottom for the full rationale.
+#
+# NO PANEL ON STARTUP: `terminal.integrated.hideOnStartup: always`. Note this does NOT
+# govern an extension force-revealing its own Output channel — some-extension does that on
+# every activation when it can't reach n8n on 127.0.0.1:5678, and no setting suppresses
+# it (it contributes only n8n.agent.* / n8n.tls.*). Disable that extension for the
+# workspace, or give it an n8n to talk to.
+#
 # RIGHT-CLICK: `terminal.integrated.rightClickBehavior: nothing` passes right-click to
 # the terminal app. herdr's tab context menu (New tab / Rename / Close) was being drawn
 # UNDER VS Code's own Copy/Paste/Kill Terminal menu. Costs the VS Code terminal context
@@ -77,6 +90,10 @@ FRESH_JSON=$(cat <<'JSONC'
   // to add your own keys — the script only inserts what is missing and never rewrites
   // or strips what is already here.
   "terminal.integrated.persistentSessionReviveProcess": "never",
+  // Don't bring the panel up on window open/reload. Sessions live in Ghostty/Moshi
+  // against herdr, so a terminal should appear only when asked for. Pairs with
+  // RVC_AUTO_MUX=off, which stops the terminal that DOES open from auto-attaching.
+  "terminal.integrated.hideOnStartup": "always",
   // Pass right-click to the terminal app (herdr's own tab menu) instead of VS Code's.
   "terminal.integrated.rightClickBehavior": "nothing",
   // Cap what the file watcher tracks — the VS Code half of the ENOSPC fix. The other
@@ -130,6 +147,11 @@ WATCH_KEY = "files.watcherExclude"
 # Top-level scalar settings this script owns.
 WANT_TOP = {
     "terminal.integrated.persistentSessionReviveProcess": "never",
+    # Don't open the panel on window open/reload. Note this does NOT stop an
+    # extension force-revealing its own Output channel (some-extension does exactly
+    # that when it can't reach n8n) — no setting governs that; disable the
+    # extension for the workspace instead.
+    "terminal.integrated.hideOnStartup": "always",
     # Pass right-click to the terminal app instead of showing VS Code's own context
     # menu. Required for a mouse-aware TUI like herdr: right-clicking a herdr tab opens
     # herdr's New tab / Rename / Close menu, but VS Code drew its Copy/Paste/Kill
@@ -324,7 +346,7 @@ ensure_setting() {
   if [ ! -s "$f" ]; then
     printf '%s\n' "$FRESH_JSON" > "$f"
     chown "$DEV_USER:$DEV_USER" "$f"; chmod 644 "$f"
-    echo ">> $f: created with 2 settings + 5 watcher excludes + 4 terminal profiles"
+    echo ">> $f: created with 3 settings + 5 watcher excludes + 4 terminal profiles"
     return
   fi
 
@@ -333,4 +355,39 @@ ensure_setting() {
 }
 
 for f in "${FILES[@]}"; do ensure_setting "$f"; done
+
+# ---- reconnection grace time ----------------------------------------------
+# Close the laptop and the SSH socket dies. The server parks the extension host and
+# terminals for a grace period, then DISPOSES them — after which the client has
+# nothing to reattach to and can only offer "Reload Window". The default is 3h, so
+# any overnight sleep loses the session. remoteagent.log records it verbatim as:
+#   "The reconnection grace time of 3h has expired, so the connection will be disposed."
+#
+# 16h covers a lid closed overnight while still reclaiming the extension hosts when
+# the machine is genuinely abandoned for a day — the grace window is exactly what
+# keeps those processes (and their RAM) alive, so this trades against the swap
+# pressure from long-lived VS Code server processes (deploy/95-swap-monitor.sh).
+#
+# `server-env-setup` is sourced by Remote-SSH before the server starts. It must stay
+# SILENT: anything on stdout corrupts the connection handshake. Lives under
+# ~/.vscode-server, which is exactly what a "delete it and let it reinstall" fix
+# wipes — hence managing it here rather than leaving it hand-made.
+GRACE_MS="${GRACE_MS:-57600000}"   # 16h. VS Code default is 10800000 (3h).
+ENV_SETUP="$HOME_DIR/.vscode-server/server-env-setup"
+install -d -o "$DEV_USER" -g "$DEV_USER" "$(dirname "$ENV_SETUP")"
+install -o "$DEV_USER" -g "$DEV_USER" -m 0644 /dev/stdin "$ENV_SETUP" <<ENVSETUP
+# Managed by remote-vs-code deploy/67-vscode-terminal-settings.sh.
+# Sourced by VS Code Remote-SSH before the server starts. Keep it SILENT —
+# anything written to stdout here can corrupt the connection handshake.
+export VSCODE_RECONNECTION_GRACE_TIME=$GRACE_MS
+ENVSETUP
+if out="$(bash -c ". '$ENV_SETUP'" 2>&1)" && [ -z "$out" ]; then
+  echo ">> $ENV_SETUP: grace time ${GRACE_MS}ms ($((GRACE_MS/3600000))h), silent on stdout"
+else
+  echo "!! $ENV_SETUP produced output or failed — Remote-SSH may not connect: $out" >&2
+  exit 1
+fi
+
 echo ">> done. Reload VS Code / reconnect for it to take effect (see header for how to verify)."
+echo ">> NOTE: the grace time applies at SERVER start, not window reload — run"
+echo "   'Remote-SSH: Kill VS Code Server on Host' to pick it up now."
