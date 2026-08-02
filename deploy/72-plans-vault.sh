@@ -21,6 +21,14 @@
 # therefore refuses to push unless every configured mount is live. This is the
 # single most important safety property here — do not weaken it.
 #
+# CHANGING WHERE AN ENTRY PUBLISHES retires its old vault path. The server still
+# holds notes there, and pvault-sync pulls before it pushes — so the pull would
+# recreate those orphans through the NEW bind mount, i.e. inside the repo, and the
+# push would send them back up, minting new guids each cycle and invalidating every
+# permalink in the frontmatter. `apply` therefore pushes immediately after any mount
+# change, before a pull can run. Symptom if this regresses: stray empty directories
+# appearing in a repo (docs/plans, docs/specs) and permalinks that keep going stale.
+#
 # ONE BAD EXTENSION BLOCKS EVERYTHING: rtmd classifies anything that is not .md /
 # .canvas / .base as an ATTACHMENT (kinds.ts), and the server rejects attachments
 # whose extension is not in its `attachment_allowed_extensions` config with
@@ -195,6 +203,7 @@ FSTAB="${PVAULT_FSTAB:-/etc/fstab}"
 BEGIN='# >>> remote-vs-code plans-vault >>>'
 END='# <<< remote-vs-code plans-vault <<<'
 SUDO="${PVAULT_SUDO-sudo}"
+LIB_SYNC="${PVAULT_SYNC:-/usr/local/lib/remote-vs-code/pvault-sync.sh}"
 
 die() { printf 'pvault: %s\n' "$*" >&2; exit 1; }
 
@@ -298,6 +307,7 @@ cmd_apply() {
     [ -n "$m" ] || continue
     if ! grep -qxF "$m" <<<"$want"; then
       printf 'unmounting stale %s\n' "$m"
+      changed=1
       $SUDO umount "$m" || true
       # Drop the now-empty mountpoint and any parents it left behind, or moving an
       # entry to a new vault-path strands the old tree as empty folders. Bounded to
@@ -331,8 +341,22 @@ cmd_apply() {
     else
       printf 'mounting %s\n' "${dst#"$VAULT_ROOT"/}"
     fi
+    changed=1
     $SUDO mount --bind "$src" "$dst" || printf 'pvault: FAILED to mount %s\n' "$dst" >&2
   done < <(entries)
+
+  # PUSH FIRST when the mount layout changed, and do NOT let a pull run before it.
+  # Re-pointing an entry leaves the server holding notes at the OLD vault paths.
+  # pvault-sync's normal order is pull-then-push, so the pull would RESURRECT those
+  # orphans — writing them back through the new bind mount into the repo itself
+  # (my-project gained empty docs/plans/ and docs/specs/ trees this way), which then
+  # push back up, and every cycle mints fresh guids that invalidate the permalinks
+  # in the frontmatter. A push here sees the old paths as locally absent and deletes
+  # them server-side, which is the correct reading: the config no longer publishes them.
+  if [ -n "${changed:-}" ] && [ -x "$LIB_SYNC" ] && [ -f "$VAULT_ROOT/.rtmd" ]; then
+    printf 'mounts changed — pushing to retire old vault paths before any pull\n'
+    "$LIB_SYNC" push || printf 'pvault: post-apply push failed; run `pvault sync` once resolved\n' >&2
+  fi
 }
 
 # Files that are NOT notes sync as attachments, and one the server's allowlist
