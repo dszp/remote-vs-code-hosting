@@ -282,6 +282,21 @@ cmd_list() {
   done < <(entries)
 }
 
+# fstab fields are whitespace-delimited, so a space in a vault path has to be
+# written as an octal escape. Unescaped, the field splits: every entry under
+# "REPORTS/Monthly Invoice Review" writes target ".../REPORTS/Monthly" with
+# fstype "Invoice", so they all collapse to one duplicate mount unit and the
+# boot drops to emergency mode. Backslash is substituted first or it would
+# re-escape the sequences the later rules emit.
+fstab_esc() { # $1 = path -> escaped for use as an fstab field
+  local s="$1"
+  s="${s//\\/\\134}"
+  s="${s// /\\040}"
+  s="${s//$'\t'/\\011}"
+  s="${s//$'\n'/\\012}"
+  printf '%s' "$s"
+}
+
 # Rewrite the managed fstab block, then mount anything not yet mounted. Entries
 # removed from the config are unmounted. Idempotent: safe to re-run any time.
 cmd_apply() {
@@ -292,7 +307,10 @@ cmd_apply() {
       [ -e "$src" ] || { printf 'pvault: skipping missing source %s\n' "$src" >&2; continue; }
       # A file source needs a file mount point; a directory needs a directory.
       if [ -d "$src" ]; then mkdir -p "$dst"; else mkdir -p "$(dirname "$dst")"; [ -e "$dst" ] || : > "$dst"; fi
-      printf '%s %s none bind 0 0\n' "$src" "$dst"
+      # nofail: a bind whose target went missing must not strand the whole boot
+      # in emergency mode. pvault-sync already refuses to push when a configured
+      # mount is inactive, so an unmounted entry still surfaces loudly.
+      printf '%s %s none bind,nofail 0 0\n' "$(fstab_esc "$src")" "$(fstab_esc "$dst")"
     done < <(entries)
     printf '%s\n' "$END"
   } > "$tmp"

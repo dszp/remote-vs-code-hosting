@@ -49,7 +49,7 @@ is "comments and blanks ignored"              "$(pv mountpoints | wc -l)"   "2"
 # --- apply ------------------------------------------------------------------
 pv apply >/dev/null
 is "fstab: one entry per config line" "$(grep -c 'none bind' "$TMP/fstab")" "2"
-like "fstab: bind option"             "$(grep 'vault/A ' "$TMP/fstab")"    "none bind 0 0"
+like "fstab: bind option"             "$(grep 'vault/A ' "$TMP/fstab")"    "none bind,nofail 0 0"
 like "mount called for the directory" "$(cat "$TMP/calls")"                "--bind $TMP/ws/A/docs $TMP/vault/A"
 ok_file=$([ -f "$TMP/vault/B/f.md" ] && echo file || echo other)
 is "a FILE source gets a file mountpoint"      "$ok_file" "file"
@@ -94,6 +94,16 @@ printf 'A/docs   REPORTS/Monthly Invoice Review\n' > "$TMP/conf"
 is "vault-path may contain spaces" "$(pv mountpoints)" "$TMP/vault/REPORTS/Monthly Invoice Review"
 is "where: round-trips a spaced path" "$(pv where 'REPORTS/Monthly Invoice Review/x.md')" \
    "$TMP/ws/A/docs/x.md"
+
+# REGRESSION: parsing the space correctly is not enough — the fstab WRITER has to
+# escape it too. Unescaped, the field splits and every entry under the folder
+# writes the same truncated target with fstype "Invoice", so they collapse onto
+# one duplicate mount unit and the next boot lands in emergency mode. Assert on
+# the line that reaches fstab, not just on what mountpoints parses back.
+pv apply >/dev/null
+spaced="$(grep REPORTS "$TMP/fstab")"
+like   "fstab: target spaces are escaped"   "$spaced" 'REPORTS/Monthly\040Invoice\040Review'
+unlike "fstab: no raw space in the target"  "$spaced" 'Monthly Invoice'
 
 # --- check: attachments are a push hazard -----------------------------------
 # One extension the server rejects fails the WHOLE push, so flag them up front.

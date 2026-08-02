@@ -27,7 +27,7 @@ LIB_DIR=/tmp/rvc-build HOME_DIR=/tmp/rvc-build UNIT=/tmp/rvc-build/unit.service 
   HERDR_TITLE_COPY="$PWD/deploy/build/herdr-title.py" \
   bash deploy/69-herdr-title.sh
 # 95 needs sudo (it installs a system unit) and always writes the dev user's
-# ~/.notify/swap-check.sh; SWAP_CHECK_COPY additionally drops a copy for the tests.
+# /usr/local/bin/swap-check.sh; SWAP_CHECK_COPY additionally drops a copy for the tests.
 sudo SWAP_CHECK_COPY="$PWD/deploy/build/swap-check.sh" bash deploy/95-swap-monitor.sh DEV_USER="$(id -un)"
 sudo chown "$(id -un)" deploy/build/*
 bash tests/run-all.sh

@@ -21,9 +21,15 @@ HOME_DIR="/home/$DEV_USER"
 
 install -d -o "$DEV_USER" -g "$DEV_USER" -m 700 "$HOME_DIR/.notify"
 
-log "writing $HOME_DIR/.notify/swap-check.sh"
-SWAP_CHECK="$HOME_DIR/.notify/swap-check.sh"
-cat > "$HOME_DIR/.notify/swap-check.sh" <<'CHK'
+# The check script lives in /usr/local/bin, NOT under $HOME. SELinux is enforcing here and
+# anything in a home directory is user_home_t, which init_t may not execute: a system unit
+# pointed at ~/.notify/swap-check.sh dies at 203/EXEC before User= is ever applied. Running
+# the same file by hand from a login shell (unconfined_t) works, so the breakage is silent
+# unless you look at the unit — this failed every 2 min for 13 days before anyone noticed.
+# /usr/local/bin resolves to bin_t. ~/.notify stays the bridge: sockets, push.env, state.
+SWAP_CHECK="/usr/local/bin/swap-check.sh"
+log "writing $SWAP_CHECK"
+cat > "$SWAP_CHECK" <<'CHK'
 #!/bin/bash
 # Notify when swap usage is high — an early warning for the memory pressure that OOM-killed
 # the box (and every tmux session) on 2026-07-12. Mirrors reboot-check.sh: try the Mac
@@ -146,8 +152,28 @@ if [ -n "${SWAP_CHECK_COPY:-}" ]; then
   install -m 0644 "$SWAP_CHECK" "$SWAP_CHECK_COPY"
   echo "copied swap-check to $SWAP_CHECK_COPY"
 fi
-chmod 700 "$HOME_DIR/.notify/swap-check.sh"
-chown "$DEV_USER:$DEV_USER" "$HOME_DIR/.notify/swap-check.sh"
+chmod 755 "$SWAP_CHECK"
+chown root:root "$SWAP_CHECK"
+# New files inherit bin_t from the directory rule, but restore explicitly so a script that
+# was moved here from $HOME does not keep a stale user_home_t label.
+command -v restorecon >/dev/null 2>&1 && restorecon -F "$SWAP_CHECK" || :
+
+# An earlier revision installed this check under $HOME, where the system unit could not
+# execute it; a hand-made user-level timer was added as a workaround and never removed.
+# Retire it, or both fire and every alert arrives twice.
+# Drop the old home-directory copy too, or the tunables get edited in a file nothing runs.
+rm -f "$HOME_DIR/.notify/swap-check.sh"
+uid="$(id -u "$DEV_USER")"
+for u in swap-notify.timer swap-notify.service; do
+  f="$HOME_DIR/.config/systemd/user/$u"
+  [ -e "$f" ] || continue
+  runuser -u "$DEV_USER" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+    systemctl --user disable --now "$u" >/dev/null 2>&1 || :
+  rm -f "$f"
+  log "removed stale user-level $u (superseded by the system unit)"
+done
+runuser -u "$DEV_USER" -- env XDG_RUNTIME_DIR="/run/user/$uid" \
+  systemctl --user daemon-reload >/dev/null 2>&1 || :
 
 # ---- system timer that runs the per-user check every 2 minutes --------------------------
 log "installing swap-notify.service + .timer (runs as $DEV_USER, every 2 min)"
@@ -159,7 +185,7 @@ Description=Notify when swap usage is high (memory-pressure early warning)
 Type=oneshot
 User=$DEV_USER
 Environment=HOME=$HOME_DIR
-ExecStart=$HOME_DIR/.notify/swap-check.sh
+ExecStart=$SWAP_CHECK
 UNIT
 
 cat > /etc/systemd/system/swap-notify.timer <<'UNIT'
@@ -180,4 +206,4 @@ systemctl enable --now swap-notify.timer
 ok "high-swap alert armed: checks every 2 min; pushes at >= ${SWAP_HIGH_PCT:-50}% swap via the ~/.notify bridge."
 log "alert uses the same ~/.notify bridge as Claude: Mac desktop when connected, push when offline."
 log "test now (forces a send regardless of current swap, then clears state):"
-log "  sudo -u $DEV_USER HOME=$HOME_DIR SWAP_HIGH_PCT=0 NOTIFY_PUSH_MODE=always $HOME_DIR/.notify/swap-check.sh; rm -f $HOME_DIR/.notify/swap-check.state"
+log "  sudo -u $DEV_USER HOME=$HOME_DIR SWAP_HIGH_PCT=0 NOTIFY_PUSH_MODE=always $SWAP_CHECK; rm -f $HOME_DIR/.notify/swap-check.state"
