@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Weekly UNATTENDED SECURITY updates, with NO automatic reboot — plus an alert when a reboot
+# Daily UNATTENDED SECURITY updates, with NO automatic reboot — plus an alert when a reboot
 # becomes pending (kernel / core libs / systemd updated). The alert mirrors the Claude
 # attention hook (deploy/85-notify-hook.sh): it raises a native macOS notification on the
 # laptop when you're connected, and falls back to a push (Pushover/ntfy) when you're offline.
@@ -9,11 +9,14 @@
 # RUN ON: the VM. run-remote sudo's; the per-user check runs as $DEV_USER.
 #   ./deploy/run-remote.sh __VM_NAME__ deploy/90-auto-updates.sh DEV_USER=__DEV_USER__
 #
-# Idempotent. Updates apply on dnf-automatic.timer, weekly by default — override with
-# AUTO_UPGRADE_ONCALENDAR=<systemd OnCalendar>. The reboot check stays on its own DAILY
-# timer (reboot-notify.timer) deliberately: it must keep nagging every day that a reboot is
-# owed, not once a week in lockstep with the upgrades that created the need.
-# Nothing reboots on its own — that stays manual.
+# Idempotent. Updates apply on dnf-automatic.timer, daily by default — override with
+# AUTO_UPGRADE_ONCALENDAR=<systemd OnCalendar>. The reboot check runs on its own daily timer
+# (reboot-notify.timer). Nothing reboots on its own — that stays manual.
+#
+# Why security-only rather than a full upgrade: daily unattended is deliberately the narrow,
+# boring set, because nothing here reboots and a surprise mid-week package change would land
+# on a box that is mid-session. Full `dnf upgrade` is run BY HAND at reboot time, when the
+# kernel is being activated anyway and the blast radius is a moment you chose.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -46,12 +49,16 @@ system_name =
 debuglevel = 1
 CONF
 
-# Cadence lives in a drop-in, not the vendor unit, so a dnf-automatic package update cannot
-# quietly restore the daily default. The empty OnCalendar= is load-bearing: OnCalendar is a
-# LIST, so without resetting it first the vendor's daily entry survives and the timer fires
-# on both schedules. Persistent=true matters more at weekly than daily — a run missed while
-# the VM was off is caught up on the next boot instead of waiting another week.
-AUTO_UPGRADE_ONCALENDAR="${AUTO_UPGRADE_ONCALENDAR:-Sun *-*-* 06:00:00}"
+# Cadence lives in a drop-in, not the vendor unit. At the daily default these values match
+# what dnf-automatic.timer already ships (*-*-* 6:00, 60m jitter, Persistent=true), so this
+# asserts the schedule rather than changing it — the same reason automatic.conf is written
+# wholesale above instead of trusting defaults. It also pins the schedule against a vendor
+# change and keeps AUTO_UPGRADE_ONCALENDAR available (e.g. 'Sun *-*-* 06:00:00' for weekly).
+#
+# The empty OnCalendar= is load-bearing whenever the value is NOT the vendor's: OnCalendar
+# is a LIST, so without resetting it first the vendor entry survives and the timer fires on
+# both schedules. Persistent=true catches up a run missed while the VM was off.
+AUTO_UPGRADE_ONCALENDAR="${AUTO_UPGRADE_ONCALENDAR:-*-*-* 06:00:00}"
 log "setting dnf-automatic cadence: $AUTO_UPGRADE_ONCALENDAR"
 install -d -m 0755 /etc/systemd/system/dnf-automatic.timer.d
 cat > /etc/systemd/system/dnf-automatic.timer.d/cadence.conf <<CONF

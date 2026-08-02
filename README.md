@@ -260,7 +260,7 @@ window colors) must be installed **in the remote** (Extensions view → "Install
 on the remote workspace's `.vscode/settings.json`. A gitignored `.vscode/settings.json` won't ride
 along with `git clone`, so set such settings in the remote window directly.
 
-**E. Automatic security updates + reboot-pending alert.** Apply security updates weekly and
+**E. Automatic security updates + reboot-pending alert.** Apply security updates daily and
 **never reboot automatically** — instead get notified the moment a reboot becomes pending,
 so you choose when. Reuses the **B** notify bridge, so the alert behaves exactly like a
 Claude attention notification: native macOS notification when the laptop is connected, push
@@ -268,8 +268,8 @@ Claude attention notification: native macOS notification when the laptop is conn
 ```bash
 ./deploy/run-remote.sh __VM_NAME__ deploy/90-auto-updates.sh DEV_USER=__DEV_USER__
 ```
-`dnf-automatic` runs `upgrade_type=security`, `apply_updates=yes`, `reboot=never` on a weekly
-timer (errata-driven — only advisory-flagged packages apply). A second, still-daily timer
+`dnf-automatic` runs `upgrade_type=security`, `apply_updates=yes`, `reboot=never` on a daily
+timer (errata-driven — only advisory-flagged packages apply). A second daily timer
 (`reboot-notify.timer`) runs `dnf needs-restarting -r` and, when a reboot is pending
 (kernel / core libs / systemd), notifies via the bridge:
 - **Laptop connected** → native macOS notification (terminal-notifier), same as Claude.
@@ -340,7 +340,7 @@ consequences for upgrades:
   (`command -v code-server >/dev/null 2>&1 || … install.sh | sh`), so re-running it on a
   host that already has code-server is a no-op — it never touches the version.
 - **`dnf-automatic` won't upgrade it either.** The RPM is installed standalone (not from a
-  dnf repo), so the weekly security-update timer (**enhancement E**) leaves it alone.
+  dnf repo), so the daily security-update timer (**enhancement E**) leaves it alone.
 
 So bumping to a new release (e.g. when GitHub announces one) is a deliberate manual step.
 Because it's an RPM install, pin the exact release and swap the package, then restart the
