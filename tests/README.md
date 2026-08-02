@@ -18,6 +18,7 @@ sudo WS_LIB_COPY="$PWD/deploy/build/ws-name.sh" \
      MUX_COPY="$PWD/deploy/build/mux.sh" \
      bash deploy/65-auto-attach.sh DEV_USER="$(id -un)"
 sudo HS_BIN="$PWD/deploy/build/hs" bash deploy/71-hs-shortcut.sh
+sudo PVAULT_BIN="$PWD/deploy/build/pvault" bash deploy/72-plans-vault.sh
 sudo chown "$(id -un)" deploy/build/*
 # 69 needs no sudo: every path it writes is redirected below, so nothing lands in
 # /usr/local, /etc, or your ~/.config.
@@ -40,6 +41,7 @@ copies are a side effect. Re-run the same commands after editing either script.
 | file | covers |
 |---|---|
 | `test-ws-name.sh` | `_rvc_ws_name` — the shared session-naming rule (deploy/65) |
+| `test-pvault.sh` | `pvault` — config parsing, fstab reconciliation, file-vs-dir mountpoints, add/rm guards (deploy/72) |
 | `test-mux.sh` | `mux` / `_mux_herdr` — what each form dispatches, `default` vs `--session default`, policy independence (deploy/65) |
 | `test-hs-list.sh` | `hs ls`, session enumeration, `session.json` cwd enrichment |
 | `test-hs-launch.sh` | `hs` create/attach paths, `-n` suffixing, name safety, nesting guard |
