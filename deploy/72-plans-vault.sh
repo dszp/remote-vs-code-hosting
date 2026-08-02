@@ -308,12 +308,29 @@ cmd_apply() {
         d="$(dirname "$d")"
       done
     fi
-  done < <(findmnt -rn -o TARGET | grep "^$VAULT_ROOT/" || true)
+    # -l (list), NOT -r (raw): raw mode escapes spaces as \x20, so every mount whose
+    # vault-path contains a space failed the comparison below, was declared stale, and
+    # was unmounted and immediately remounted on every apply. Harmless-looking churn,
+    # but between the two the vault file is an empty stub — and a push landing in that
+    # window would truncate it server-side.
+  done < <(findmnt -ln -o TARGET | grep "^$VAULT_ROOT/" || true)
 
   while IFS=$'\t' read -r src dst; do
     [ -e "$src" ] || continue
-    findmnt -rn --mountpoint "$dst" >/dev/null 2>&1 && continue
-    printf 'mounting %s\n' "${dst#"$VAULT_ROOT"/}"
+    # Presence is not enough: changing an entry's SOURCE while its vault-path stays
+    # the same (widening `X/docs/superpowers  V` to `X/docs  V`) leaves the old mount
+    # in place, and "already mounted" would silently skip it — the config says one
+    # thing and the vault shows another. findmnt reports a bind mount's origin as
+    # DEV[/sub/path]; compare that, and remount when it disagrees.
+    if findmnt -ln --mountpoint "$dst" >/dev/null 2>&1; then
+      local cur; cur="$(findmnt -ln -o SOURCE --mountpoint "$dst" 2>/dev/null | head -1)"
+      cur="${cur#*[}"; cur="${cur%]}"
+      [ "$cur" = "$src" ] && continue
+      printf 'remounting %s (was %s)\n' "${dst#"$VAULT_ROOT"/}" "${cur#"$WS"/}"
+      $SUDO umount "$dst" || true
+    else
+      printf 'mounting %s\n' "${dst#"$VAULT_ROOT"/}"
+    fi
     $SUDO mount --bind "$src" "$dst" || printf 'pvault: FAILED to mount %s\n' "$dst" >&2
   done < <(entries)
 }
