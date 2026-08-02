@@ -21,6 +21,17 @@
 # therefore refuses to push unless every configured mount is live. This is the
 # single most important safety property here — do not weaken it.
 #
+# ONE BAD EXTENSION BLOCKS EVERYTHING: rtmd classifies anything that is not .md /
+# .canvas / .base as an ATTACHMENT (kinds.ts), and the server rejects attachments
+# whose extension is not in its `attachment_allowed_extensions` config with
+# "server error: attachment extension not allowed" — which fails the whole push,
+# not just that file. Plans stop syncing because of one stray .html or .xlsx, and
+# the only symptom is a non-zero exit in the journal. The CLI has NO ignore
+# mechanism (isExcluded only skips dot-segments) and does NOT honor the vault's
+# "Sync attachments" / "Attachment exclusions" settings — those are plugin-side.
+# So the mount list is the only filter: publish .md files or markdown-only folders.
+# `pvault check` lists what would be offered as an attachment; `pvault add` warns.
+#
 # SYNC IS POLLED, not live: rtmd has no daemon/watch mode (status/pull/push only,
 # a three-way diff against the .rtmd snapshot). So pull runs on a timer, and push
 # is driven by inotify on the vault root. Both go through one flock so they can
@@ -77,7 +88,8 @@ if [ ! -f "$CONF" ]; then
 #            a deep path — `ReconDash/docs/superpowers  ReconDash` publishes as
 #            plans/ReconDash/{plans,specs} instead of four levels of nesting.
 #
-# Blank lines and #-comments ignored. Paths with spaces: quote the whole field.
+# Blank lines and #-comments ignored. Split on the FIRST whitespace run, so a
+# vault-path MAY contain spaces ("REPORTS/Monthly Invoice Review"); a source may not.
 # Apply changes with `pvault apply` (or `pvault add <src> [dest]`, which does both).
 #
 # DELIBERATELY EXCLUDED, and why:
@@ -170,6 +182,7 @@ install -m 0755 /dev/stdin /usr/local/bin/pvault <<'PVAULT'
 #   pvault rm  <src>        remove an entry, unmount, and apply
 #   pvault link <path>      clickable Obsidian permalink for a repo OR vault path
 #   pvault where <vpath>    the real file on disk behind a vault path
+#   pvault check            list published files that sync as ATTACHMENTS (push risk)
 #   pvault sync             run one pull+push now
 #   pvault status           rtmd status for the vault
 #   pvault mountpoints      absolute mount destinations, one per line (internal)
@@ -192,9 +205,12 @@ entries() {
   while read -r line; do
     line="${line%%#*}"; line="${line#"${line%%[![:space:]]*}"}"
     [ -n "$line" ] || continue
-    # shellcheck disable=SC2086
-    set -- $line
-    local src="$1" dst="${2:-}"
+    # Split on the FIRST whitespace run only, so a vault path may contain spaces
+    # ("REPORTS/Monthly Invoice Review"). Obsidian folder names routinely do.
+    # The SOURCE may not — it is always a repo path, and none have spaces.
+    local src="${line%%[[:space:]]*}" dst="${line#"${line%%[[:space:]]*}"}"
+    dst="${dst#"${dst%%[![:space:]]*}"}"      # ltrim
+    dst="${dst%"${dst##*[![:space:]]}"}"      # rtrim
     case "$src" in /*) ;; *) src="$WS/$src" ;; esac
     [ -n "$dst" ] || dst="${src#"$WS"/}"
     printf '%s\t%s\n' "$src" "$VAULT_ROOT/$dst"
@@ -280,7 +296,18 @@ cmd_apply() {
   local want; want="$(cmd_mountpoints)"
   while read -r m; do
     [ -n "$m" ] || continue
-    grep -qxF "$m" <<<"$want" || { printf 'unmounting stale %s\n' "$m"; $SUDO umount "$m" || true; }
+    if ! grep -qxF "$m" <<<"$want"; then
+      printf 'unmounting stale %s\n' "$m"
+      $SUDO umount "$m" || true
+      # Drop the now-empty mountpoint and any parents it left behind, or moving an
+      # entry to a new vault-path strands the old tree as empty folders. Bounded to
+      # the vault root, and rmdir refuses anything non-empty, so this can't eat data.
+      local d="$m"
+      while [ "$d" != "$VAULT_ROOT" ] && [ "${d#"$VAULT_ROOT"/}" != "$d" ]; do
+        rmdir "$d" 2>/dev/null || break
+        d="$(dirname "$d")"
+      done
+    fi
   done < <(findmnt -rn -o TARGET | grep "^$VAULT_ROOT/" || true)
 
   while IFS=$'\t' read -r src dst; do
@@ -289,6 +316,35 @@ cmd_apply() {
     printf 'mounting %s\n' "${dst#"$VAULT_ROOT"/}"
     $SUDO mount --bind "$src" "$dst" || printf 'pvault: FAILED to mount %s\n' "$dst" >&2
   done < <(entries)
+}
+
+# Files that are NOT notes sync as attachments, and one the server's allowlist
+# rejects fails the ENTIRE push. rtmd's kinds.ts: .md=note, .canvas, .base — the
+# rest are attachments. The allowlist is server config and not exposed over the
+# API, so the best a client can do is flag everything that takes that path.
+nonnote_files() { # $1 = path to scan
+  [ -e "$1" ] || return 0
+  find "$1" -type f -not -path '*/.*' \
+    ! -iname '*.md' ! -iname '*.canvas' ! -iname '*.base' 2>/dev/null
+}
+
+cmd_check() {
+  local total=0 src dst
+  while IFS=$'\t' read -r src dst; do
+    local n; n="$(nonnote_files "$src" | wc -l)"
+    [ "$n" -eq 0 ] && continue
+    total=$((total+n))
+    printf '%-52s %s attachment(s)\n' "${src#"$WS"/}" "$n"
+    nonnote_files "$src" | sed 's|.*\.||' | sort | uniq -c | sort -rn | sed 's/^/     /' | head -5
+  done < <(entries)
+  if [ "$total" -eq 0 ]; then
+    echo "clean — every published file is a note (.md/.canvas/.base)"
+  else
+    echo
+    echo "$total file(s) would be offered as attachments. If the server's allowlist"
+    echo "rejects ANY of them the whole push fails ('attachment extension not allowed')"
+    echo "and nothing syncs — plans included. Publish the .md files individually instead."
+  fi
 }
 
 # Advisory checks only — `pvault add` warns and proceeds, it does not refuse.
@@ -331,6 +387,12 @@ cmd_add() {
   local rel="${abs#"$WS"/}"
   conf_has "$rel" "$abs" && die "already configured: $rel"
   warn_about "$abs"
+  local nn; nn="$(nonnote_files "$abs" | wc -l)"
+  if [ "$nn" -gt 0 ]; then
+    printf 'pvault: NOTE %s contains %s non-note file(s) (%s) — they sync as ATTACHMENTS,\n' \
+      "$rel" "$nn" "$(nonnote_files "$abs" | sed 's|.*\.||' | sort -u | tr '\n' ',' | sed 's/,$//')" >&2
+    printf '        and one the server rejects fails the ENTIRE push. Consider adding the\n        .md files individually. Check later with: pvault check\n' >&2
+  fi
   printf '%s%s\n' "$rel" "${dst:+  $dst}" >> "$CONF"
   printf 'added %s%s\n' "$rel" "${dst:+ -> $dst}"
   cmd_apply
@@ -354,6 +416,7 @@ case "${1:-list}" in
   mountpoints) cmd_mountpoints ;;
   link)        shift; cmd_link "$@" ;;
   where)       shift; cmd_where "$@" ;;
+  check)       cmd_check ;;
   sync)        /usr/local/lib/remote-vs-code/pvault-sync.sh both ;;
   status)      (cd "$VAULT_ROOT" && rtmd status) ;;
   -h|--help|help)
