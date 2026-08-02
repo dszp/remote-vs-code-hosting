@@ -168,6 +168,8 @@ install -m 0755 /dev/stdin /usr/local/bin/pvault <<'PVAULT'
 #   pvault apply            reconcile fstab + mounts to match the config
 #   pvault add <src> [dst]  add an entry and apply
 #   pvault rm  <src>        remove an entry, unmount, and apply
+#   pvault link <path>      clickable Obsidian permalink for a repo OR vault path
+#   pvault where <vpath>    the real file on disk behind a vault path
 #   pvault sync             run one pull+push now
 #   pvault status           rtmd status for the vault
 #   pvault mountpoints      absolute mount destinations, one per line (internal)
@@ -200,6 +202,49 @@ entries() {
 }
 
 cmd_mountpoints() { entries | cut -f2; }
+
+# Map a path to its place in the vault. Accepts a REPO path (absolute or relative
+# to ~/workspace) or an already-vault-relative path. Prints the vault-relative
+# form, or nothing if the path is not published.
+#
+# This has to exist because the mapping is NOT mechanical: a config vault-path
+# override collapses levels ("Remote-VS-Code/remote-vs-code/docs/superpowers" ->
+# "Remote-VS-Code"), so nothing can derive the vault path from a repo path
+# without reading the config. Anything wanting a permalink needs this first.
+vault_path_of() { # $1 = path
+  local p="$1" abs src dst
+  case "$p" in /*) abs="$p" ;; *) abs="$WS/$p" ;; esac
+  while IFS=$'\t' read -r src dst; do
+    case "$abs" in
+      "$src") printf '%s' "${dst#"$VAULT_ROOT"/}"; return 0 ;;
+      "$src"/*) printf '%s/%s' "${dst#"$VAULT_ROOT"/}" "${abs#"$src"/}"; return 0 ;;
+    esac
+  done < <(entries)
+  # Already vault-relative? Accept it if it actually exists in the vault.
+  [ -e "$VAULT_ROOT/$p" ] && { printf '%s' "$p"; return 0; }
+  return 1
+}
+
+cmd_where() {   # vault-relative -> the real file on disk (what the phone can't see)
+  local p="${1:?usage: pvault where <vault-path>}" src dst
+  while IFS=$'\t' read -r src dst; do
+    local rel="${dst#"$VAULT_ROOT"/}"
+    case "$p" in
+      "$rel") printf '%s\n' "$src"; return 0 ;;
+      "$rel"/*) printf '%s/%s\n' "$src" "${p#"$rel"/}"; return 0 ;;
+    esac
+  done < <(entries)
+  die "not a published vault path: $p"
+}
+
+cmd_link() {
+  local p="${1:?usage: pvault link <repo-path|vault-path>}" vp
+  vp="$(vault_path_of "$p")" || die "not published (and not in the vault): $p"
+  [ -e "$VAULT_ROOT/$vp" ] || die "published, but no such file in the vault: $vp"
+  command -v rtmd >/dev/null || die "rtmd is not installed"
+  # rtmd resolves paths against the bound folder, so run from the vault root.
+  (cd "$VAULT_ROOT" && rtmd permalink "$vp")
+}
 
 cmd_list() {
   printf '%-8s %-52s %s\n' STATE SOURCE 'VAULT PATH'
@@ -307,10 +352,12 @@ case "${1:-list}" in
   add)         shift; cmd_add "$@" ;;
   rm|remove)   shift; cmd_rm "$@" ;;
   mountpoints) cmd_mountpoints ;;
+  link)        shift; cmd_link "$@" ;;
+  where)       shift; cmd_where "$@" ;;
   sync)        /usr/local/lib/remote-vs-code/pvault-sync.sh both ;;
   status)      (cd "$VAULT_ROOT" && rtmd status) ;;
   -h|--help|help)
-    sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//' ;;
+    sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command '$1' (try: pvault --help)" ;;
 esac
 PVAULT
