@@ -19,7 +19,9 @@ echo x > "$TMP/ws/B/f.md"
 # Stubs: findmnt reports nothing mounted; mount/umount just record the call.
 cat > "$TMP/bin/findmnt" <<'S'
 #!/usr/bin/env bash
-[[ "$*" == *"-o TARGET"* ]] && exit 0    # enumerate: nothing mounted
+# $MOUNTED (newline-separated) lets a test say what is already mounted.
+if [[ "$*" == *"-o TARGET"* ]]; then printf '%s' "${MOUNTED:-}"; exit 0; fi
+for m in ${MOUNTED_LIST:-}; do :; done
 exit 1                                    # --mountpoint probe: not a mountpoint
 S
 cat > "$TMP/bin/mount"  <<'S'
@@ -105,6 +107,16 @@ like "check: explains the blast radius" "$(pv check)" "whole push fails"
 like "check: canvas/base count as notes" "$(pv check)" "1 attachment(s)"
 rm -f "$TMP/ws/A/docs/report.html"
 like "check: clean again once removed" "$(pv check)" "clean"
+
+# --- a mounted spaced path must not be seen as stale -------------------------
+# REGRESSION: `findmnt -r` escapes spaces as \x20, so a mount whose vault-path had a
+# space never matched the wanted list, was declared stale, and got unmounted then
+# remounted on EVERY apply. Between the two the vault file is an empty stub, and a
+# push landing in that window truncates it server-side. -l does not escape.
+printf 'A/docs   REPORTS/Monthly Invoice Review\n' > "$TMP/conf"
+: > "$TMP/calls"
+MOUNTED="$TMP/vault/REPORTS/Monthly Invoice Review" pv apply >/dev/null
+unlike "spaced mount is not unmounted as stale" "$(cat "$TMP/calls")" "UMOUNT"
 
 # --- guards are advisory, not fatal -----------------------------------------
 # A third-party origin should WARN but still add: the call is the user's.
