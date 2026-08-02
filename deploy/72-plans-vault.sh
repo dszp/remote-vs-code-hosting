@@ -29,16 +29,33 @@
 # change, before a pull can run. Symptom if this regresses: stray empty directories
 # appearing in a repo (docs/plans, docs/specs) and permalinks that keep going stale.
 #
-# ONE BAD EXTENSION BLOCKS EVERYTHING: rtmd classifies anything that is not .md /
-# .canvas / .base as an ATTACHMENT (kinds.ts), and the server rejects attachments
-# whose extension is not in its `attachment_allowed_extensions` config with
-# "server error: attachment extension not allowed" — which fails the whole push,
-# not just that file. Plans stop syncing because of one stray .html or .xlsx, and
-# the only symptom is a non-zero exit in the journal. The CLI has NO ignore
-# mechanism (isExcluded only skips dot-segments) and does NOT honor the vault's
-# "Sync attachments" / "Attachment exclusions" settings — those are plugin-side.
-# So the mount list is the only filter: publish .md files or markdown-only folders.
-# `pvault check` lists what would be offered as an attachment; `pvault add` warns.
+# ATTACHMENTS ARE FILTERED IN THE CLI, as of @realtime-md/cli 0.1.0 (2026-08-02).
+# rtmd classifies anything that is not .md / .canvas / .base as an ATTACHMENT
+# (kinds.ts), and the server rejects any whose extension is outside its
+# `attachment_allowed_extensions` config — a rejection that fails the WHOLE push,
+# not just that file. Before 0.1.0 the CLI had no ignore mechanism, so one stray
+# .xlsx stopped every plan from syncing and the only symptom was a non-zero exit
+# in the journal. The mount list was the only available filter.
+#
+# 0.1.0 added a per-folder policy, stored as `attachmentSync` in .rtmd:
+#     rtmd config attachments off
+#     rtmd config attachments on --include "**/*.html,assets/**"
+#     rtmd config attachments on --all
+#     rtmd config attachments              # show the current policy
+# Non-matching attachments are ignored in BOTH directions — never uploaded,
+# downloaded, or deleted — so a blocked extension can no longer break the push.
+# THIS HOST publishes `**/*.html` and ignores everything else, which is what lets
+# whole repo folders be bound instead of markdown files one at a time.
+#
+# Two traps that remain:
+#   - Ignored is SILENT. A .pdf in a bound folder simply never appears in the
+#     vault; nothing warns you. `pvault check` reports the live policy and what
+#     it excludes, which is the only place that discrepancy surfaces.
+#   - `rtmd ls` still LISTS ignored files with their classified kind, because it
+#     merges the local scan into the listing. They are not on the server — check
+#     with `rtmd attach ls`, which lists only what is actually stored.
+# The policy is CLI-side and unrelated to the vault's own "Sync attachments" /
+# "Attachment exclusions" settings in Obsidian, which are plugin-side.
 #
 # SYNC IS POLLED, not live: rtmd has no daemon/watch mode (status/pull/push only,
 # a three-way diff against the .rtmd snapshot). So pull runs on a timer, and push
@@ -48,17 +65,16 @@
 # PREREQUISITE — `rtmd`, the Realtime CLI, on PATH, and ~/vaults/plans already
 # bound to a vault (`rtmd clone --cursor-token … <vaultId> ~/vaults/plans`; the
 # cursor secret is vault-scoped and audited, unlike a personal session token).
-# It is expected on npm shortly — install it that way once it is. Until then it
-# builds from source, and the ONE thing worth writing down is the build ORDER,
-# because the documented command alone fails with four "Could not resolve
-# @realtime-md/sdk" errors:
-#     git clone https://github.com/nealol/realtime ~/src/realtime
-#     cd ~/src/realtime && bun install
-#     bun run --filter @realtime-md/sdk build     # <- FIRST; not in their docs
-#     bun run --filter @realtime-md/cli build
-# The built CLI runs on plain node (bun is only the builder). Wrap it as
-# ~/.local/bin/rtmd, and resolve node explicitly there — nvm's node is not on a
-# systemd user unit's PATH, so the sync timer would fail with "node: not found".
+# Published to npm on 2026-08-02, so it is no longer built from source:
+#     npm i -g @realtime-md/cli
+#     rtmd config attachments on --include "**/*.html"   # see the note above
+# It is still wrapped as ~/.local/bin/rtmd, because BOTH the `rtmd` symlink npm
+# creates and the `#!/usr/bin/env node` shebang inside it are tied to one nvm
+# node version that a systemd user unit's PATH cannot see — the sync timer would
+# fail with "node: not found", and an `nvm install` would strand the package on
+# the old version. The wrapper resolves the newest node that actually HAS it.
+# `rtmd whoami` prints the bound vault id (0.1.0); before that it took a devtools
+# console in Obsidian to find one.
 #
 # RUN ON: the VM.
 #   ./deploy/run-remote.sh __VM_NAME__ deploy/72-plans-vault.sh DEV_USER=__DEV_USER__
@@ -190,7 +206,7 @@ install -m 0755 /dev/stdin /usr/local/bin/pvault <<'PVAULT'
 #   pvault rm  <src>        remove an entry, unmount, and apply
 #   pvault link <path>      clickable Obsidian permalink for a repo OR vault path
 #   pvault where <vpath>    the real file on disk behind a vault path
-#   pvault check            list published files that sync as ATTACHMENTS (push risk)
+#   pvault check            attachment policy + published files it filters out
 #   pvault sync             run one pull+push now
 #   pvault status           rtmd status for the vault
 #   pvault mountpoints      absolute mount destinations, one per line (internal)
@@ -305,8 +321,11 @@ cmd_apply() {
     printf '%s\n' "$BEGIN"
     while IFS=$'\t' read -r src dst; do
       [ -e "$src" ] || { printf 'pvault: skipping missing source %s\n' "$src" >&2; continue; }
-      # A file source needs a file mount point; a directory needs a directory.
-      if [ -d "$src" ]; then mkdir -p "$dst"; else mkdir -p "$(dirname "$dst")"; [ -e "$dst" ] || : > "$dst"; fi
+      # Mount points are created in the MOUNT loop below, not here. Creating them
+      # this early put them in reach of the stale-cleanup loop that runs in between:
+      # collapsing per-file entries into one folder entry made the folder first, then
+      # cleanup rmdir'd it as soon as the last retired child left it empty, and the
+      # mount failed with "mount point does not exist".
       # nofail: a bind whose target went missing must not strand the whole boot
       # in emergency mode. pvault-sync already refuses to push when a configured
       # mount is inactive, so an unmounted entry still surfaces loudly.
@@ -330,7 +349,23 @@ cmd_apply() {
       # Drop the now-empty mountpoint and any parents it left behind, or moving an
       # entry to a new vault-path strands the old tree as empty folders. Bounded to
       # the vault root, and rmdir refuses anything non-empty, so this can't eat data.
-      local d="$m"
+      #
+      # A FILE mountpoint has to be unlinked explicitly: `rmdir` on a file always
+      # fails, so retiring a single-file entry used to leave the 0-byte stub that
+      # `: > "$dst"` created. rtmd walks the vault tree, not this config, so the
+      # stub read as "this note was emptied" and the post-apply push TRUNCATED the
+      # note server-side — it stayed visible in Obsidian, blank. That looks like a
+      # successful sync, which is what made it dangerous.
+      if [ -f "$m" ] && ! findmnt -ln --mountpoint "$m" >/dev/null 2>&1; then
+        if [ -s "$m" ]; then
+          # Content here did not come from the bind (a bind never writes through to
+          # the mountpoint's own inode), so it predates the mount. Not ours to delete.
+          printf 'pvault: NOT removing %s — stale mountpoint is non-empty\n' "${m#"$VAULT_ROOT"/}" >&2
+        else
+          rm -f "$m"
+        fi
+      fi
+      local d="$m"; [ -d "$d" ] || d="$(dirname "$d")"
       while [ "$d" != "$VAULT_ROOT" ] && [ "${d#"$VAULT_ROOT"/}" != "$d" ]; do
         rmdir "$d" 2>/dev/null || break
         d="$(dirname "$d")"
@@ -360,6 +395,10 @@ cmd_apply() {
       printf 'mounting %s\n' "${dst#"$VAULT_ROOT"/}"
     fi
     changed=1
+    # Create the mount point HERE, after the stale-cleanup loop has had its say —
+    # see the note in the fstab loop above. A file source needs a file mount point;
+    # a directory needs a directory.
+    if [ -d "$src" ]; then mkdir -p "$dst"; else mkdir -p "$(dirname "$dst")"; [ -e "$dst" ] || : > "$dst"; fi
     $SUDO mount --bind "$src" "$dst" || printf 'pvault: FAILED to mount %s\n' "$dst" >&2
   done < <(entries)
 
@@ -377,18 +416,35 @@ cmd_apply() {
   fi
 }
 
-# Files that are NOT notes sync as attachments, and one the server's allowlist
-# rejects fails the ENTIRE push. rtmd's kinds.ts: .md=note, .canvas, .base — the
-# rest are attachments. The allowlist is server config and not exposed over the
-# API, so the best a client can do is flag everything that takes that path.
+# Files that are NOT notes sync as attachments. rtmd's kinds.ts: .md=note,
+# .canvas, .base — the rest are attachments, and whether they sync at all is the
+# .rtmd `attachmentSync` policy's call (see the header).
 nonnote_files() { # $1 = path to scan
   [ -e "$1" ] || return 0
   find "$1" -type f -not -path '*/.*' \
     ! -iname '*.md' ! -iname '*.canvas' ! -iname '*.base' 2>/dev/null
 }
 
+# The live attachment policy, read from .rtmd: "off", "all", or the include globs.
+# Reported rather than assumed — it is per-folder CLI state that lives outside
+# this config, so the two can disagree and only this surfaces it.
+attach_policy() {
+  local f="$VAULT_ROOT/.rtmd"
+  [ -r "$f" ] || { echo "unknown"; return; }
+  python3 - "$f" <<'PY' 2>/dev/null || echo "unknown"
+import json, sys
+a = (json.load(open(sys.argv[1])).get("attachmentSync") or {})
+if not a: print("all")                       # absent = pre-0.1.0 default
+elif not a.get("enabled"): print("off")
+else:
+    g = a.get("includeGlobs") or []
+    print(", ".join(g) if g else "all")
+PY
+}
+
 cmd_check() {
-  local total=0 src dst
+  local total=0 src dst policy; policy="$(attach_policy)"
+  printf 'attachment policy: %s   (rtmd config attachments …)\n\n' "$policy"
   while IFS=$'\t' read -r src dst; do
     local n; n="$(nonnote_files "$src" | wc -l)"
     [ "$n" -eq 0 ] && continue
@@ -396,14 +452,21 @@ cmd_check() {
     printf '%-52s %s attachment(s)\n' "${src#"$WS"/}" "$n"
     nonnote_files "$src" | sed 's|.*\.||' | sort | uniq -c | sort -rn | sed 's/^/     /' | head -5
   done < <(entries)
-  if [ "$total" -eq 0 ]; then
-    echo "clean — every published file is a note (.md/.canvas/.base)"
-  else
-    echo
-    echo "$total file(s) would be offered as attachments. If the server's allowlist"
-    echo "rejects ANY of them the whole push fails ('attachment extension not allowed')"
-    echo "and nothing syncs — plans included. Publish the .md files individually instead."
-  fi
+  [ "$total" -eq 0 ] && { echo "clean — every published file is a note (.md/.canvas/.base)"; return; }
+  echo
+  case "$policy" in
+    off)  echo "$total non-note file(s) above are IGNORED — never uploaded, and nothing"
+          echo "warns when one is missing from the vault. Notes still sync normally." ;;
+    all)  echo "$total non-note file(s) above ALL sync as attachments. If the server's"
+          echo "allowlist rejects any extension the ENTIRE push fails and nothing syncs."
+          echo "Narrow it: rtmd config attachments on --include '**/*.html'" ;;
+    unknown)
+          echo "$total non-note file(s) above. Could not read the policy from"
+          echo "$VAULT_ROOT/.rtmd — check it with: rtmd config attachments" ;;
+    *)    echo "$total non-note file(s) above; only those matching [$policy] sync."
+          echo "The rest are ignored silently. A rejected extension inside the filter"
+          echo "would still fail the whole push." ;;
+  esac
 }
 
 # Advisory checks only — `pvault add` warns and proceeds, it does not refuse.
@@ -448,9 +511,13 @@ cmd_add() {
   warn_about "$abs"
   local nn; nn="$(nonnote_files "$abs" | wc -l)"
   if [ "$nn" -gt 0 ]; then
-    printf 'pvault: NOTE %s contains %s non-note file(s) (%s) — they sync as ATTACHMENTS,\n' \
+    local policy; policy="$(attach_policy)"
+    printf 'pvault: NOTE %s contains %s non-note file(s) (%s);\n' \
       "$rel" "$nn" "$(nonnote_files "$abs" | sed 's|.*\.||' | sort -u | tr '\n' ',' | sed 's/,$//')" >&2
-    printf '        and one the server rejects fails the ENTIRE push. Consider adding the\n        .md files individually. Check later with: pvault check\n' >&2
+    case "$policy" in
+      all) printf '        the attachment policy is "all", so every one of them uploads — and a\n        single rejected extension fails the ENTIRE push. Narrow it with\n        `rtmd config attachments on --include …`, or check: pvault check\n' >&2 ;;
+      *)   printf '        the attachment policy is [%s], so the rest are ignored SILENTLY —\n        they will simply never appear in the vault. Check: pvault check\n' "$policy" >&2 ;;
+    esac
   fi
   printf '%s%s\n' "$rel" "${dst:+  $dst}" >> "$CONF"
   printf 'added %s%s\n' "$rel" "${dst:+ -> $dst}"

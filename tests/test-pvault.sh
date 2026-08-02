@@ -105,18 +105,72 @@ spaced="$(grep REPORTS "$TMP/fstab")"
 like   "fstab: target spaces are escaped"   "$spaced" 'REPORTS/Monthly\040Invoice\040Review'
 unlike "fstab: no raw space in the target"  "$spaced" 'Monthly Invoice'
 
-# --- check: attachments are a push hazard -----------------------------------
-# One extension the server rejects fails the WHOLE push, so flag them up front.
+# --- check: attachments, and the policy that decides their fate --------------
+# Pre-0.1.0 every attachment uploaded and one rejected extension failed the WHOLE
+# push. 0.1.0 added a per-folder filter in .rtmd, so `check` has to report the LIVE
+# policy — it is state outside this config, and the two can disagree.
 printf 'A/docs   A\n' > "$TMP/conf"
 : > "$TMP/ws/A/docs/note.md"
 like "check: clean when all notes" "$(pv check)" "clean"
 : > "$TMP/ws/A/docs/report.html"
 like "check: flags the attachment"  "$(pv check)" "1 attachment(s)"
-like "check: explains the blast radius" "$(pv check)" "whole push fails"
 : > "$TMP/ws/A/docs/x.canvas"; : > "$TMP/ws/A/docs/y.base"
 like "check: canvas/base count as notes" "$(pv check)" "1 attachment(s)"
+
+rtmd_policy() { printf '{"version":1,"baseUrl":"u","vaultId":"v"%s}\n' "$1" > "$TMP/vault/.rtmd"; }
+like "check: no .rtmd reads as unknown"  "$(pv check)" "policy: unknown"
+rtmd_policy ''
+like "check: absent key is the old all"  "$(pv check)" "policy: all"
+like "check: ...and warns it can break"  "$(pv check)" "ENTIRE push fails"
+rtmd_policy ',"attachmentSync":{"enabled":false,"includeGlobs":[]}'
+like "check: disabled reads as off"      "$(pv check)" "policy: off"
+like "check: ...and says ignored"        "$(pv check)" "IGNORED"
+rtmd_policy ',"attachmentSync":{"enabled":true,"includeGlobs":["**/*.html","assets/**"]}'
+like "check: globs are reported"         "$(pv check)" '**/*.html, assets/**'
+like "check: ...and says silently"       "$(pv check)" "ignored silently"
+rtmd_policy ',"attachmentSync":{"enabled":true,"includeGlobs":[]}'
+like "check: enabled with no globs = all" "$(pv check)" "policy: all"
+
 rm -f "$TMP/ws/A/docs/report.html"
 like "check: clean again once removed" "$(pv check)" "clean"
+
+# --- retiring a FILE entry must unlink its mountpoint ------------------------
+# REGRESSION: cleanup used rmdir, which ALWAYS fails on a file, so a retired
+# single-file entry left behind the 0-byte stub that `: > "$dst"` created. rtmd
+# walks the vault tree rather than this config, so that stub read as "the note was
+# emptied" and the post-apply push TRUNCATED it server-side — the note stayed
+# visible in Obsidian, blank, which looks like a successful sync.
+mkdir -p "$TMP/ws/E"; echo real > "$TMP/ws/E/one.md"
+printf 'E/one.md   V/one.md\n' > "$TMP/conf"
+pv apply >/dev/null
+is "file mountpoint was created" "$([ -f "$TMP/vault/V/one.md" ] && echo yes)" "yes"
+printf '# nothing\n' > "$TMP/conf"
+MOUNTED="$TMP/vault/V/one.md" pv apply >/dev/null
+is "retired file stub is unlinked"     "$([ -e "$TMP/vault/V/one.md" ] && echo left)" ""
+is "...and its empty parent goes too"  "$([ -e "$TMP/vault/V" ] && echo left)"       ""
+
+# A stub that somehow holds content predates the mount and is NOT ours to delete.
+printf 'E/one.md   V/one.md\n' > "$TMP/conf"; pv apply >/dev/null
+echo "pre-existing" > "$TMP/vault/V/one.md"
+printf '# nothing\n' > "$TMP/conf"
+out="$(MOUNTED="$TMP/vault/V/one.md" pv apply)"
+like "non-empty stale mountpoint is refused" "$out" "NOT removing"
+is   "...and left on disk"  "$(cat "$TMP/vault/V/one.md")" "pre-existing"
+rm -rf "$TMP/vault/V"
+
+# --- collapsing file entries into one folder entry ---------------------------
+# REGRESSION: mount points were created in the fstab loop, which runs BEFORE the
+# stale-cleanup loop. Replacing per-file entries with one folder entry made the
+# folder first, then cleanup rmdir'd it the moment its last retired child left it
+# empty, and the mount died with "mount point does not exist".
+mkdir -p "$TMP/ws/F"; echo a > "$TMP/ws/F/a.md"; echo b > "$TMP/ws/F/b.md"
+printf 'F/a.md   V/a.md\nF/b.md   V/b.md\n' > "$TMP/conf"
+pv apply >/dev/null
+printf 'F   V\n' > "$TMP/conf"
+: > "$TMP/calls"
+MOUNTED="$(printf '%s\n%s' "$TMP/vault/V/a.md" "$TMP/vault/V/b.md")" pv apply >/dev/null
+is   "collapsed: folder mountpoint survives cleanup" "$([ -d "$TMP/vault/V" ] && echo dir)" "dir"
+like "collapsed: the folder is mounted"              "$(cat "$TMP/calls")" "MOUNT --bind $TMP/ws/F $TMP/vault/V"
 
 # --- a mounted spaced path must not be seen as stale -------------------------
 # REGRESSION: `findmnt -r` escapes spaces as \x20, so a mount whose vault-path had a
