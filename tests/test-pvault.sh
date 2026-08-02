@@ -85,6 +85,27 @@ like "where: refuses an unpublished path" "$(pv where Nope/z.md)" "not a publish
 # link resolves the mapping BEFORE it needs rtmd, so the refusal is testable too.
 like "link: refuses an unpublished path"  "$(pv link "$TMP/ws/elsewhere.md")" "not published"
 
+# --- vault paths with spaces ------------------------------------------------
+# Split on the FIRST whitespace run only. Obsidian folder names routinely contain
+# spaces; this silently truncated to "REPORTS/Monthly" before the fix.
+printf 'A/docs   REPORTS/Monthly Invoice Review\n' > "$TMP/conf"
+is "vault-path may contain spaces" "$(pv mountpoints)" "$TMP/vault/REPORTS/Monthly Invoice Review"
+is "where: round-trips a spaced path" "$(pv where 'REPORTS/Monthly Invoice Review/x.md')" \
+   "$TMP/ws/A/docs/x.md"
+
+# --- check: attachments are a push hazard -----------------------------------
+# One extension the server rejects fails the WHOLE push, so flag them up front.
+printf 'A/docs   A\n' > "$TMP/conf"
+: > "$TMP/ws/A/docs/note.md"
+like "check: clean when all notes" "$(pv check)" "clean"
+: > "$TMP/ws/A/docs/report.html"
+like "check: flags the attachment"  "$(pv check)" "1 attachment(s)"
+like "check: explains the blast radius" "$(pv check)" "whole push fails"
+: > "$TMP/ws/A/docs/x.canvas"; : > "$TMP/ws/A/docs/y.base"
+like "check: canvas/base count as notes" "$(pv check)" "1 attachment(s)"
+rm -f "$TMP/ws/A/docs/report.html"
+like "check: clean again once removed" "$(pv check)" "clean"
+
 # --- guards are advisory, not fatal -----------------------------------------
 # A third-party origin should WARN but still add: the call is the user's.
 mkdir -p "$TMP/ws/D/docs"; git -C "$TMP/ws/D" init -q

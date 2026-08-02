@@ -15,6 +15,16 @@ symlinks outright, so a symlink farm would sync nothing.
 - `pvault list` — what's published + mount state · `pvault apply` — reconcile mounts to config
 - `pvault add <src> [vault-path]` — publish a folder OR a single file, and mount it now
 - `pvault rm <src>` — stop publishing it · `pvault sync` — force a pull+push
+- `pvault check` — list published files that sync as **attachments**. ⚠ Anything not
+  `.md`/`.canvas`/`.base` is an attachment, and if the server's allowlist rejects even one,
+  the **entire push fails** (`attachment extension not allowed`) and nothing syncs — plans
+  included. The CLI has no ignore mechanism and does **not** honor the vault's
+  "Sync attachments"/"Attachment exclusions" settings (those are plugin-side), so the mount
+  list is the only filter: publish `.md` files, or folders that contain only markdown.
+  `pvault add` warns up front. Symptom if you miss it: sync silently stops, journal shows
+  the error — `journalctl --user -u pvault-pull.service`.
+- A **vault-path may contain spaces** (`REPORTS/Monthly Invoice Review`); the source may not.
+  Parsing splits on the first whitespace run only.
 - `pvault link <path>` — clickable Obsidian permalink (`https://.../n/<guid>`) for a repo
   path, a `~/workspace`-relative path, or a vault path. `pvault where <vault-path>` goes the
   other way, to the real file on disk. Needed because a vault-path override collapses levels,
