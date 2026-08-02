@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Daily UNATTENDED SECURITY updates, with NO automatic reboot — plus an alert when a reboot
+# Weekly UNATTENDED SECURITY updates, with NO automatic reboot — plus an alert when a reboot
 # becomes pending (kernel / core libs / systemd updated). The alert mirrors the Claude
 # attention hook (deploy/85-notify-hook.sh): it raises a native macOS notification on the
 # laptop when you're connected, and falls back to a push (Pushover/ntfy) when you're offline.
@@ -9,8 +9,11 @@
 # RUN ON: the VM. run-remote sudo's; the per-user check runs as $DEV_USER.
 #   ./deploy/run-remote.sh __VM_NAME__ deploy/90-auto-updates.sh DEV_USER=__DEV_USER__
 #
-# Idempotent. Updates apply on dnf-automatic.timer (daily); the reboot check runs on its
-# own daily timer (reboot-notify.timer). Nothing reboots on its own — that stays manual.
+# Idempotent. Updates apply on dnf-automatic.timer, weekly by default — override with
+# AUTO_UPGRADE_ONCALENDAR=<systemd OnCalendar>. The reboot check stays on its own DAILY
+# timer (reboot-notify.timer) deliberately: it must keep nagging every day that a reboot is
+# owed, not once a week in lockstep with the upgrades that created the need.
+# Nothing reboots on its own — that stays manual.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
@@ -43,7 +46,24 @@ system_name =
 debuglevel = 1
 CONF
 
-log "enabling dnf-automatic.timer (daily)"
+# Cadence lives in a drop-in, not the vendor unit, so a dnf-automatic package update cannot
+# quietly restore the daily default. The empty OnCalendar= is load-bearing: OnCalendar is a
+# LIST, so without resetting it first the vendor's daily entry survives and the timer fires
+# on both schedules. Persistent=true matters more at weekly than daily — a run missed while
+# the VM was off is caught up on the next boot instead of waiting another week.
+AUTO_UPGRADE_ONCALENDAR="${AUTO_UPGRADE_ONCALENDAR:-Sun *-*-* 06:00:00}"
+log "setting dnf-automatic cadence: $AUTO_UPGRADE_ONCALENDAR"
+install -d -m 0755 /etc/systemd/system/dnf-automatic.timer.d
+cat > /etc/systemd/system/dnf-automatic.timer.d/cadence.conf <<CONF
+[Timer]
+OnCalendar=
+OnCalendar=$AUTO_UPGRADE_ONCALENDAR
+RandomizedDelaySec=60m
+Persistent=true
+CONF
+
+log "enabling dnf-automatic.timer"
+systemctl daemon-reload
 systemctl enable --now dnf-automatic.timer
 
 # ---- 2) per-user reboot-pending notifier (reuses the ~/.notify bridge + push.env) -------
@@ -182,6 +202,6 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now reboot-notify.timer
 
-ok "auto-updates active: security updates daily (no auto-reboot); reboot-pending alert armed."
+ok "auto-updates active: security updates on '$AUTO_UPGRADE_ONCALENDAR' (no auto-reboot); reboot-pending alert armed (daily)."
 log "alert uses the same ~/.notify bridge as Claude: Mac desktop when connected, push when offline."
 log "test now (only sends if a reboot is genuinely pending):  sudo -u $DEV_USER HOME=$HOME_DIR $REBOOT_CHECK"
