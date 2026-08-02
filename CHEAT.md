@@ -23,6 +23,9 @@ symlinks outright, so a symlink farm would sync nothing.
   empty, and rtmd would read that as "delete every file". `pvault apply` fixes it.
 - Not published: git worktrees (same files on another branch) and third-party checkouts.
   `pvault add` warns about both but lets you override.
+- Needs `rtmd` on PATH (install from npm once it ships; until then build from source —
+  build the SDK **before** the CLI, or esbuild can't resolve `@realtime-md/sdk`; see the
+  header of `deploy/72-plans-vault.sh`).
 
 ## Multiplexer: tmux or herdr (`mux` on the VM)
 Two multiplexers coexist as peers — never nest them. tmux is the default and the one VS Code

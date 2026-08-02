@@ -26,6 +26,21 @@
 # is driven by inotify on the vault root. Both go through one flock so they can
 # never interleave and corrupt the snapshot.
 #
+# PREREQUISITE — `rtmd`, the Realtime CLI, on PATH, and ~/vaults/plans already
+# bound to a vault (`rtmd clone --cursor-token … <vaultId> ~/vaults/plans`; the
+# cursor secret is vault-scoped and audited, unlike a personal session token).
+# It is expected on npm shortly — install it that way once it is. Until then it
+# builds from source, and the ONE thing worth writing down is the build ORDER,
+# because the documented command alone fails with four "Could not resolve
+# @realtime-md/sdk" errors:
+#     git clone https://github.com/nealol/realtime ~/src/realtime
+#     cd ~/src/realtime && bun install
+#     bun run --filter @realtime-md/sdk build     # <- FIRST; not in their docs
+#     bun run --filter @realtime-md/cli build
+# The built CLI runs on plain node (bun is only the builder). Wrap it as
+# ~/.local/bin/rtmd, and resolve node explicitly there — nvm's node is not on a
+# systemd user unit's PATH, so the sync timer would fail with "node: not found".
+#
 # RUN ON: the VM.
 #   ./deploy/run-remote.sh __VM_NAME__ deploy/72-plans-vault.sh DEV_USER=__DEV_USER__
 # Set PVAULT_BIN=/path to also drop a copy of the tool for the test suite.
