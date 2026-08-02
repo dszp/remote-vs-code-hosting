@@ -19,8 +19,20 @@ symlinks outright, so a symlink farm would sync nothing.
   path, a `~/workspace`-relative path, or a vault path. `pvault where <vault-path>` goes the
   other way, to the real file on disk. Needed because a vault-path override collapses levels,
   so the mapping can't be derived without the config.
-- Plans/specs written from now on carry `source_path:` + `permalink:` frontmatter, so a note
-  read on the phone says where it lives on the VM. Backfilled in this repo only.
+- Every plan/spec carries tracing frontmatter, so a note read on the phone says where it
+  lives on the VM and which repo it belongs to (`workspace` is the sort/group key):
+
+  ```yaml
+  ---
+  source_path: ~/workspace/<repo>/docs/superpowers/specs/<file>.md
+  workspace: NetSapiens          # _rvc_ws_name — the project root / herdr session name
+  repo: sv-portal-kit            # bare repo name (from origin, else the directory)
+  repo_url: https://github.com/servantvoice/sv-portal-kit   # omit when there is no remote
+  permalink: https://realtime.__BASE_DOMAIN__/n/<guid>
+  ---
+  ```
+  All 64 existing files across the ten published projects are backfilled; write new ones
+  the same way. `permalink` survives content edits — the guid is keyed to the note's path.
 - Config: `~/.config/remote-vs-code/plans-vault.conf` (`<source> [<vault-path>]`; source is
   relative to `~/workspace`). Give a vault-path to flatten a deep source.
 - Push is **event-driven** (inotify on the vault, ~5s); pull is a **60s timer**
