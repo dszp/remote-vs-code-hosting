@@ -7,6 +7,23 @@
 - **VS Code:** Remote-SSH → `__VM_NAME__` (or `__VM_NAME__-cf` when off-tailnet) → open `~/workspace/<project>`.
 - **Any browser (incl. iPad):** `https://__CODE_HOSTNAME__` (Access → code-server password).
 
+## Plans vault — read/edit Claude's docs from Obsidian on any device (`pvault`)
+Selected folders are bind-mounted into a Realtime vault at `~/vaults/plans`, so a plan
+Claude writes on the VM shows up in Obsidian in seconds, and an edit made on the phone
+writes **through** to the repo's own file. Bind mounts, not symlinks: the rtmd CLI skips
+symlinks outright, so a symlink farm would sync nothing.
+- `pvault list` — what's published + mount state · `pvault apply` — reconcile mounts to config
+- `pvault add <src> [vault-path]` — publish a folder OR a single file, and mount it now
+- `pvault rm <src>` — stop publishing it · `pvault sync` — force a pull+push
+- Config: `~/.config/remote-vs-code/plans-vault.conf` (`<source> [<vault-path>]`; source is
+  relative to `~/workspace`). Give a vault-path to flatten a deep source.
+- Push is **event-driven** (inotify on the vault, ~5s); pull is a **60s timer**
+  (`pvault-push.service`, `pvault-pull.timer`). rtmd has no watch mode, hence the polling.
+- ⚠ A push is **refused** while any configured mount is inactive — an unmounted dir looks
+  empty, and rtmd would read that as "delete every file". `pvault apply` fixes it.
+- Not published: git worktrees (same files on another branch) and third-party checkouts.
+  `pvault add` warns about both but lets you override.
+
 ## Multiplexer: tmux or herdr (`mux` on the VM)
 Two multiplexers coexist as peers — never nest them. tmux is the default and the one VS Code
 integrated terminals auto-attach (so the Claude extension's terminal stays persistent); herdr
