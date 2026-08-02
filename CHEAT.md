@@ -210,7 +210,7 @@ nothing — and its socket API has no kick-client request.
 - full notes: `~/OP-SECRETS.md` on the VM
 
 ## Updates
-- Security updates apply **daily, automatically** (`dnf-automatic.timer`); the VM **never
+- Security updates apply **weekly, automatically** (`dnf-automatic.timer`); the VM **never
   reboots on its own**. When a reboot becomes pending you're alerted via the same bridge as
   Claude: Mac desktop notification if the laptop's connected, else a push (Blink-mosh link).
 - Status: `systemctl status dnf-automatic.timer reboot-notify.timer` · last run:
