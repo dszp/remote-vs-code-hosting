@@ -26,7 +26,9 @@ run_script() { # [seed_json]
     mkdir -p "$TMP/home/$(dirname "$NATIVE_REL")"
     printf '%s' "$1" > "$TMP/home/$NATIVE_REL"
   fi
-  HOME_DIR="$TMP/home" DEV_USER="$(id -un)" bash "$SCRIPT" >"$TMP/out" 2>"$TMP/err"
+  # ETC_ENV MUST be redirected: unset, the script writes the real /etc/environment.
+  HOME_DIR="$TMP/home" DEV_USER="$(id -un)" ETC_ENV="$TMP/etcenv" \
+    bash "$SCRIPT" >"$TMP/out" 2>"$TMP/err"
 }
 
 NATIVE() { printf '%s' "$TMP/home/$NATIVE_REL"; }
@@ -111,7 +113,7 @@ is "opt-out: glob is not inserted a second time" \
 # --- everything already present: reports no change ----------------------------------
 run_script
 before="$(cat "$(NATIVE)")"
-HOME_DIR="$TMP/home" DEV_USER="$(id -un)" bash "$SCRIPT" >"$TMP/out2" 2>&1
+HOME_DIR="$TMP/home" DEV_USER="$(id -un)" ETC_ENV="$TMP/etcenv" bash "$SCRIPT" >"$TMP/out2" 2>&1
 is   "second run: file byte-for-byte unchanged" "$(cat "$(NATIVE)")" "$before"
 like "second run: says no change"               "$(cat "$TMP/out2")" "no change"
 
@@ -134,8 +136,28 @@ is "server-env-setup is silent on stdout" "$(bash -c ". '$ENVF'")" ""
 is "it actually exports the variable" \
    "$(bash -c ". '$ENVF'; printf %s \"\$VSCODE_RECONNECTION_GRACE_TIME\"")" "57600000"
 # Overridable, so a shorter window can be chosen without editing the script.
-GRACE_MS=3600000 HOME_DIR="$TMP/home" DEV_USER="$(id -un)" bash "$SCRIPT" >/dev/null 2>&1
+GRACE_MS=3600000 HOME_DIR="$TMP/home" DEV_USER="$(id -un)" ETC_ENV="$TMP/etcenv" bash "$SCRIPT" >/dev/null 2>&1
 like "GRACE_MS override honored" "$(cat "$ENVF")" "GRACE_TIME=3600000"
+
+# --- /etc/environment: the copy that ACTUALLY takes effect ---------------------------
+# server-env-setup above is the documented hook, but the CLI server flow
+# (code-<hash> command-shell -> cli/servers/…/bin/code-server) never sources it — a
+# server started that way has the variable absent from its environment. The server
+# inherits the SSH session env instead, so pam_env is the injection point that works.
+rm -f "$TMP/etcenv"; run_script
+like "etc/environment: variable written" "$(cat "$TMP/etcenv")" "VSCODE_RECONNECTION_GRACE_TIME=57600000"
+# pam_env parses KEY=VALUE ONLY. An `export` prefix makes the line silently useless.
+unlike "etc/environment: no shell syntax" "$(cat "$TMP/etcenv")" "export"
+# Changing the value must REWRITE the line. Appending leaves two, and pam_env takes the
+# first — so the new value would be silently shadowed by the old one.
+GRACE_MS=3600000 HOME_DIR="$TMP/home" DEV_USER="$(id -un)" ETC_ENV="$TMP/etcenv" bash "$SCRIPT" >/dev/null 2>&1
+is "etc/environment: rewritten, not appended" "$(grep -c RECONNECTION_GRACE "$TMP/etcenv")" "1"
+like "etc/environment: new value took"        "$(cat "$TMP/etcenv")" "GRACE_TIME=3600000"
+# It is a shared system file — unrelated entries must survive.
+printf 'SOME_OTHER_VAR=keepme\nVSCODE_RECONNECTION_GRACE_TIME=1\n' > "$TMP/etcenv"
+run_script
+like "etc/environment: unrelated lines kept" "$(cat "$TMP/etcenv")" "SOME_OTHER_VAR=keepme"
+is   "etc/environment: still only one entry" "$(grep -c RECONNECTION_GRACE "$TMP/etcenv")" "1"
 
 # --- the result is always valid JSONC ------------------------------------------------
 run_script '{ "editor.fontSize": 14 }'
