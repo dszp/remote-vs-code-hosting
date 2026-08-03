@@ -18,12 +18,14 @@
 # shells. Only the REVIVE path (process was actually killed) is disabled — exactly the
 # case that spawned the '-2'. Durable work lives in tmux/herdr, so it is unaffected.
 #
-# THE GRACE TIME: this script also writes ~/.vscode-server/server-env-setup, raising
-# VSCODE_RECONNECTION_GRACE_TIME from its 3h default to 16h. Past the grace window the
-# server disposes the parked session and the client can only offer "Reload Window" — so
-# every overnight lid-close cost a reload. Managed here rather than left hand-made
-# because it lives under ~/.vscode-server, which is precisely what a "delete it and let
-# it reinstall" fix wipes. See the section at the bottom for the full rationale.
+# THE GRACE TIME: this script raises VSCODE_RECONNECTION_GRACE_TIME from its 3h default
+# to 16h, via /etc/environment (pam_env) AND ~/.vscode-server/server-env-setup. Past the
+# grace window the server disposes the parked session and the client can only offer
+# "Reload Window" — so every overnight lid-close cost a reload. server-env-setup is the
+# documented hook but the CLI server flow ignores it; /etc/environment is what actually
+# works. A reboot does NOT count as applying it — only a server that starts after the
+# change picks it up. See the section at the bottom for the full rationale and how to
+# verify against the process table.
 #
 # NO PANEL ON STARTUP: `terminal.integrated.hideOnStartup: always`. Note this does NOT
 # govern an extension force-revealing its own Output channel — some-extension does that on
@@ -368,11 +370,43 @@ for f in "${FILES[@]}"; do ensure_setting "$f"; done
 # keeps those processes (and their RAM) alive, so this trades against the swap
 # pressure from long-lived VS Code server processes (deploy/95-swap-monitor.sh).
 #
-# `server-env-setup` is sourced by Remote-SSH before the server starts. It must stay
-# SILENT: anything on stdout corrupts the connection handshake. Lives under
-# ~/.vscode-server, which is exactly what a "delete it and let it reinstall" fix
-# wipes — hence managing it here rather than leaving it hand-made.
+# WHERE THE VARIABLE HAS TO GO — /etc/environment, NOT server-env-setup alone.
+# `server-env-setup` is the documented hook and is sourced by the LEGACY bootstrap
+# (~/.vscode-server/bin/<hash>/server.sh). This host gets the CLI flow instead —
+# `code-<hash> command-shell` -> cli/servers/Stable-<hash>/server/bin/code-server —
+# which never reads it: nothing under ~/.vscode-server so much as mentions the file,
+# and a server started that way has the variable absent from its environment while
+# handing its own 10800000 default down to the extension hosts. Measured, not assumed:
+#     for p in $(pgrep -f '\.vscode-server'); do
+#       tr '\0' '\n' < /proc/$p/environ | grep RECONNECTION_GRACE; done
+# The server inherits the SSH session's environment, so the injection point that works
+# is pam_env — sshd here is `usepam yes` / `permituserenvironment no`, which rules out
+# ~/.ssh/environment without loosening the hardening in config/sshd_hardening.conf.
+# Both are written: /etc/environment is what actually takes effect today, and
+# server-env-setup costs nothing and starts working for free if VS Code ever wires it
+# into the CLI flow.
+#
+# IT ONLY APPLIES TO A SERVER THAT STARTS AFTERWARDS. A reconnect reuses a running
+# server ("Found running server (pid=…)" in ~/.vscode-server/.cli.<hash>.log), and
+# "Kill VS Code Server on Host" is a no-op while another window is still attached, so
+# the old grace time can survive several apparent restarts. Verify against the process
+# table, never against the file.
 GRACE_MS="${GRACE_MS:-57600000}"   # 16h. VS Code default is 10800000 (3h).
+
+# pam_env parses KEY=VALUE only — no `export`, no shell syntax. Rewrite in place so a
+# changed GRACE_MS updates rather than appending a second, shadowed line.
+ETC_ENV="${ETC_ENV:-/etc/environment}"
+touch "$ETC_ENV"
+if grep -q '^VSCODE_RECONNECTION_GRACE_TIME=' "$ETC_ENV"; then
+  sed -i "s|^VSCODE_RECONNECTION_GRACE_TIME=.*|VSCODE_RECONNECTION_GRACE_TIME=$GRACE_MS|" "$ETC_ENV"
+else
+  printf 'VSCODE_RECONNECTION_GRACE_TIME=%s\n' "$GRACE_MS" >> "$ETC_ENV"
+fi
+echo ">> $ETC_ENV: VSCODE_RECONNECTION_GRACE_TIME=$GRACE_MS (pam_env; needs a NEW server)"
+
+# server-env-setup must stay SILENT: anything on stdout corrupts the connection
+# handshake. It lives under ~/.vscode-server, which is exactly what a "delete it and
+# let it reinstall" fix wipes — hence managing it here rather than leaving it hand-made.
 ENV_SETUP="$HOME_DIR/.vscode-server/server-env-setup"
 install -d -o "$DEV_USER" -g "$DEV_USER" "$(dirname "$ENV_SETUP")"
 install -o "$DEV_USER" -g "$DEV_USER" -m 0644 /dev/stdin "$ENV_SETUP" <<ENVSETUP
