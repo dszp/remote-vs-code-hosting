@@ -27,9 +27,14 @@ symlinks outright, so a symlink farm would sync nothing.
   ```
   **This host publishes `**/*.html`.** Ignored files are never uploaded, downloaded, or
   deleted — which is what lets whole repo folders be bound instead of markdown files one
-  at a time. Two traps: ignoring is **silent** (a `.pdf` in a bound folder simply never
-  appears, nothing warns you), and `rtmd ls` still *lists* ignored files with their
-  classified kind — use `rtmd attach ls` to see what is actually on the server.
+  at a time. Three traps: ignoring is **silent** (a `.pdf` in a bound folder simply never
+  appears, nothing warns you); `rtmd ls` still *lists* ignored files with their
+  classified kind — use `rtmd attach ls` to see what is actually on the server; and a
+  synced attachment can still be **invisible in Obsidian** — the file explorer hides
+  extensions it can't open (`.html` among them) until **Settings → Files and links →
+  "Show all file types"** is on. That is a **per-device** setting: Realtime skips
+  dot-directories, so `.obsidian/app.json` never syncs and each device needs its own
+  toggle. Symptom is a folder that appears with nothing in it.
   ⚠ Under `--all`, one extension the server's allowlist rejects fails the **entire push**
   and nothing syncs, plans included; symptom is a silent stall with the error in
   `journalctl --user -u pvault-pull.service`. This is CLI-side and unrelated to the vault's
