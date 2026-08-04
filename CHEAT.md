@@ -246,6 +246,26 @@ nothing — and its socket API has no kick-client request.
   `sudo -u __DEV_USER__ HOME=/home/__DEV_USER__ SWAP_HIGH_PCT=0 NOTIFY_PUSH_MODE=always /usr/local/bin/swap-check.sh; rm -f /home/__DEV_USER__/.notify/swap-check.state`
 - Running low? Fewer simultaneous `claude` sessions is the real lever — swap is a cushion, not a cap.
 
+### Memory caps (the actual cap)
+`96-memory-caps.sh` bounds a runaway with cgroup v2 limits, because a warning can't outrun a
+leak: on 2026-08-03 two `claude.exe` processes hit ~10.5 GiB **each**, took swap 91% → 0 in
+about a minute, and the box OOM-killed. The alert fired 63s ahead of the kill — correct, useless.
+- Two nested slices, sized from RAM (`rvc_mem_cap_gib` in `deploy/lib.sh`). On a 15.9 GiB box:
+  - `app-herdr\x2dsession.slice` — herdr sessions: High **9G** / Max **12G** / Swap **4G**.
+  - `user-1000.slice` — *everything* the user runs, incl. Claude in a plain VS Code terminal
+    (a login `session-N.scope`, which the herdr cap never reaches): Max **13G** / Swap **6G**.
+    No `MemoryHigh` here on purpose — throttling an interactive slice stalls it all at once.
+- **`MemorySwapMax` is the load-bearing one.** `memory.max` bounds anon+file only; the kernel
+  relieves that by paging anon to swap — the resource that actually ran out.
+- Did a cap bite? `cat /sys/fs/cgroup/user.slice/user-1000.slice/memory.events` — `high`/`max`
+  are the counters that matter. **`oom_kill` is cumulative and never resets**, so a stale `1`
+  is not a new kill; check `journalctl -k | grep oom-kill` for a real one.
+- Effective limits: `systemctl show user-1000.slice -p MemoryMax -p MemorySwapMax`. But trust
+  the cgroup files — `daemon-reload` updates systemd's view **without** pushing values to the
+  kernel on an already-running slice, so `set-property` (what the script does) is what applies.
+- Re-run after a RAM change: `sudo DEV_USER=__DEV_USER__ bash deploy/96-memory-caps.sh`. It refuses to
+  apply a cap below current usage (that would OOM-kill on the spot) and says so.
+
 ## After a reboot
 - `ssh __VM_NAME__` works on its own (tailscaled + sshd auto-start).
 - The `claude` session is re-created empty by the boot service; anything that was *running* stopped — re-run `claude`.

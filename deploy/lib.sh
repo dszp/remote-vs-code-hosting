@@ -68,6 +68,83 @@ rvc_swap_total_gib() {
   printf '%s' $(( (kib + 1048575) / 1048576 ))
 }
 
+# ---- memory cap policy ----------------------------------------------------
+# THE ONE definition of how much memory a runaway is allowed to take. deploy/96-memory-caps.sh
+# turns these into cgroup v2 limits on two nested slices.
+#
+# WHY: swap alone only buys time. On 2026-08-03 two runaway `claude.exe` processes (the
+# Bun-compiled binary shipped inside @anthropic-ai/claude-code) reached ~10.5 GiB of charged
+# memory EACH, drove global swap to 0kB, and the kernel OOM-killer fired box-wide — exactly
+# the failure deploy/10's swapfile and deploy/95's alert were meant to soften. Neither process
+# held a large conversation (the biggest transcript on the box was 20 MB), so this is a leak
+# that recurs, not a workload that can be tuned away. Bound it instead.
+#
+# SWAP IS THE LOAD-BEARING CAP. In cgroup v2 memory.max bounds anon+file only, and the kernel
+# relieves that pressure by paging anon out to SWAP — the very resource that hit zero. Capping
+# memory without also capping swap aims the leak straight at the failure mode. During the
+# incident one process sat at 1.3 GiB resident with 9.1 GiB paged out; that dynamic was
+# already visible before any cap existed.
+#
+# TWO LAYERS, because one slice cannot see everything:
+#   herdr-*  app-herdr\x2dsession.slice — herdr sessions. Gets a graduated MemoryHigh so a
+#            busy batch is throttled before anything dies.
+#   user-*   user-<uid>.slice — the common parent of user@<uid>.service AND every login
+#            session-N.scope, so it also covers Claude started in a plain VS Code terminal
+#            (7 of 13 live sessions were outside the herdr slice when this was written).
+#            Backstop only — NO MemoryHigh: throttling an interactive slice stalls every
+#            process in it at once and reads as the whole desktop hanging.
+#
+# Percentages of RAM, not fixed GiB, so the same rule sizes a 4 GiB VM and a 64 GiB one.
+# On the 15.87 GiB __VM_NAME__ these yield 9/12/4 and 13/6 GiB respectively — chosen against
+# measured behaviour: one busy herdr session peaked at 6.31 GiB with no leak, so the caps
+# must clear that, while the leak drove the herdr slice to 13.76 and the user slice to 15.16.
+#
+# MEMINFO is overridable so this is testable (tests/test-memory-caps.sh).
+rvc_mem_cap_gib() {
+  local which="${1:-}" kib total ceil hh hm hs um us
+  kib="$(awk '/^MemTotal:/{print $2}' "${MEMINFO:-/proc/meminfo}" 2>/dev/null)"
+  # A wrong number here would either cap a box below its normal working set — killing real
+  # work every day — or set a limit so high it never fires. Refuse to guess.
+  case "$kib" in ''|*[!0-9]*) printf '0'; return 1 ;; esac
+
+  # Every value is rounded to NEAREST GiB, not truncated: at 15.87 GiB RAM, 25% truncates to
+  # 3 and would cap swap a full GiB under the intended 4.
+  #
+  # Then CLAMPED, so the layering holds by construction instead of by luck. Percentages alone
+  # break down on small boxes — on a 2 GiB VM, 82% rounds straight back to 2, a cap equal to
+  # RAM that can never fire before the global OOM killer does, i.e. exactly the failure this
+  # policy exists to prevent. The clamps are what make the rule safe at both ends:
+  #   user-max  <= RAM - 1G   the kernel, system.slice and page cache must have somewhere
+  #                           to live, or the cap is decoration.
+  #   herdr-max <= user-max   the inner cap must bite FIRST, or it is dead weight.
+  #   herdr-high<= herdr-max  the soft throttle must bite before the hard kill.
+  #   herdr-swap<= user-swap  same nesting, for the resource that actually ran out.
+  # Nothing ever floors below 1G: memory.swap.max=0 disables swap for the slice entirely,
+  # which is a very different — and much worse — policy than "cap it low".
+  total=$(( kib / 1048576 ))
+  ceil=$(( total - 1 )); [ "$ceil" -lt 1 ] && ceil=1
+
+  um=$(( (kib * 82 / 100 + 524288) / 1048576 ))   # outer backstop
+  [ "$um" -gt "$ceil" ] && um=$ceil; [ "$um" -lt 1 ] && um=1
+  hm=$(( (kib * 76 / 100 + 524288) / 1048576 ))   # cgroup OOM kill, contained to herdr
+  [ "$hm" -gt "$um" ] && hm=$um;    [ "$hm" -lt 1 ] && hm=1
+  hh=$(( (kib * 57 / 100 + 524288) / 1048576 ))   # throttle + reclaim, never kills
+  [ "$hh" -gt "$hm" ] && hh=$hm;    [ "$hh" -lt 1 ] && hh=1
+  us=$(( (kib * 38 / 100 + 524288) / 1048576 ))
+  [ "$us" -lt 1 ] && us=1
+  hs=$(( (kib * 25 / 100 + 524288) / 1048576 ))
+  [ "$hs" -gt "$us" ] && hs=$us;    [ "$hs" -lt 1 ] && hs=1
+
+  case "$which" in
+    herdr-high) printf '%s' "$hh" ;;
+    herdr-max)  printf '%s' "$hm" ;;
+    herdr-swap) printf '%s' "$hs" ;;
+    user-max)   printf '%s' "$um" ;;
+    user-swap)  printf '%s' "$us" ;;
+    *) printf '0'; return 1 ;;
+  esac
+}
+
 # ---- kernel limits --------------------------------------------------------
 # Raise the inotify watch limits persistently. Called by deploy/10-base.sh.
 #
