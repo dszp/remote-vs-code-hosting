@@ -136,6 +136,81 @@ unlike "bare url is not spoken"          "$LSAY" "example.com/raw"
 
 LPAGE="$(curl -sf "http://127.0.0.1:$PORT/s/Links" 2>/dev/null || true)"
 
+# ---- identity comes from the CALLING pane, never the focused one ----------------------
+# `moshi-hook context` resolves herdr fields from whatever pane is on screen while taking
+# cwd from the caller. That mixed provenance filed one agent's summaries into another
+# agent's stream, so two agents interleaved and evicted each other under the retention cap.
+# herdr exports the calling pane's own ids into its environment; those are authoritative
+# regardless of focus, which is why they are the only thing consulted.
+paneid() { # HERDR_* env -> the pane where() reports
+  HERDR_SESSION="$1" HERDR_WORKSPACE_ID="$2" HERDR_TAB_ID="$3" HERDR_PANE_ID="$4" \
+  python3 -c "
+import importlib.util
+s=importlib.util.spec_from_loader('sp',None); m=importlib.util.module_from_spec(s)
+exec(open('$SP').read().split('if __name__')[0], m.__dict__)
+w=m.where(); print(w.get('mux','')+'|'+w.get('pane','')+'|'+w.get('workspace',''))"
+}
+is "the calling pane's own id is used" \
+   "$(paneid Sess w6 w6:t2 w6:p2)" "herdr|w6:p2|w6"
+is "a different pane resolves differently" \
+   "$(paneid Sess w1 w1:tB w1:pF)" "herdr|w1:pF|w1"
+
+# ---- one stream per AGENT, not per session -------------------------------------------
+# A herdr session holds several workspaces, each holding several tabs, each typically one
+# agent. Keyed on the session alone, six agents in one workspace share a stream and evict
+# each other under the retention cap. Tab alone is no better: `cli` exists in three
+# different workspaces in the real layout this was built against.
+ident() { # $1 = where() JSON, $2 = session -> "<display>|<slug>"
+  python3 -c "
+import importlib.util, json, sys
+s=importlib.util.spec_from_loader('sp',None); m=importlib.util.module_from_spec(s)
+exec(open('$SP').read().split('if __name__')[0], m.__dict__)
+d,g=m.identity(json.loads(sys.argv[1]), sys.argv[2])
+print(d+'|'+g)" "$1" "$2"
+}
+slug() { ident "$1" "$2" | cut -d'|' -f2; }
+
+is "workspace named after its session collapses" \
+   "$(slug '{"workspace":"NetSapiens","tab":"subscription-webhooks"}' NetSapiens)" \
+   "NetSapiens--subscription-webhooks"
+is "a second workspace is kept" \
+   "$(slug '{"workspace":"OneBill","tab":"n8n-onebill"}' NetSapiens)" \
+   "NetSapiens--OneBill--n8n-onebill"
+
+# The case that matters: same tab name, three workspaces, three streams.
+A="$(slug '{"workspace":"NetSapiens","tab":"cli"}' NetSapiens)"
+B="$(slug '{"workspace":"Documo","tab":"cli"}' NetSapiens)"
+C="$(slug '{"workspace":"OneBill","tab":"cli"}' NetSapiens)"
+if [ "$A" != "$B" ] && [ "$B" != "$C" ] && [ "$A" != "$C" ]; then
+  ok "same tab in three workspaces gets three slugs"
+else
+  fail "same tab in three workspaces gets three slugs" "$A / $B / $C"
+fi
+
+is "two tabs in one workspace differ" \
+   "$(slug '{"workspace":"OneBill","tab":"cli"}' NetSapiens)" "NetSapiens--OneBill--cli"
+# A tab named after its own workspace collapses the same way a workspace named after its
+# session does. Safe, because only one tab in a workspace can carry that name -- and it
+# keeps the common "OneBill/OneBill" case from reading as a stutter.
+is "a tab named after its workspace collapses" \
+   "$(slug '{"workspace":"OneBill","tab":"OneBill"}' NetSapiens)" "NetSapiens--OneBill"
+is "an unnamed tab falls back to the pane" \
+   "$(slug '{"workspace":"","tab":"","pane":"w1:p3"}' Solo)" "Solo--w1-p3"
+# The overview shows the FULL identity: dropping the leading part made siblings from
+# different sessions read identically, which is the collision this key exists to prevent.
+is "display is the full identity" \
+   "$(ident '{"workspace":"OneBill","tab":"cli"}' NetSapiens | cut -d'|' -f1)" \
+   "NetSapiens / OneBill / cli"
+is "and collapses the same way the slug does" \
+   "$(ident '{"workspace":"Remote-VS-Code","tab":"speak-claude"}' Remote-VS-Code | cut -d'|' -f1)" \
+   "Remote-VS-Code / speak-claude"
+
+# Two agents publishing from different tabs must not touch each other's history.
+SPEAK_TAB_TEST=1 printf 'Alpha agent speaking.\n' | sp --session A1 >/dev/null 2>&1
+printf 'Beta agent speaking.\n' | sp --session B1 >/dev/null 2>&1
+is "each forced session keeps its own store" \
+   "$(ls -d "$TMP"/state/A1 "$TMP"/state/B1 2>/dev/null | wc -l | tr -d ' ')" "2"
+
 # ---- session identity ----------------------------------------------------------------
 # With a dozen sessions running, the project name alone identifies nothing. The path
 # below the project is what tells two sessions in one repo apart.
@@ -211,7 +286,7 @@ print('yes' if a==sorted(a) and a[0]==0 else f'no {a}')" "$(meta Split)")" "yes"
 # ---- voice selection and config ------------------------------------------------------
 printf 'Hello there.\n' | sp --voice en_US-ryan-high --session Voice >/dev/null 2>&1
 like "per-run voice reaches piper" "$(cat "$TMP/bin/piper.argv")" "en_US-ryan-high"
-like "rate reaches piper"          "$(cat "$TMP/bin/piper.argv")" "--length_scale 0.543"
+like "rate reaches piper"          "$(cat "$TMP/bin/piper.argv")" "--length_scale 0.595"
 
 sp voice en_US-ryan-high >/dev/null 2>&1
 like "voice subcommand writes config" "$(cat "$TMP/speak.env")" "VOICE=en_US-ryan-high"
@@ -243,6 +318,20 @@ for i in 1 2 3 4 5; do
 done
 is "keeps only KEEP summaries" "$(ls -d "$TMP"/state/Prune/*/ | wc -l | tr -d ' ')" "3"
 like "the newest survived" "$(cat "$(meta Prune)")" "Prune test 5"
+
+# An agent that stops publishing leaves a stream behind. Its summaries age out like any
+# other, but the empty directory used to outlive it forever -- and with the cap now per
+# agent rather than shared, those accumulate instead of being evicted by newer work.
+printf 'Abandoned agent.\n' | sp --session Gone >/dev/null 2>&1
+python3 -c "
+import json,glob,time,sys
+p=glob.glob(sys.argv[1]+'/state/Gone/*/meta.json')[0]
+m=json.load(open(p)); m['created']=time.time()-30*86400; json.dump(m,open(p,'w'))" "$TMP"
+printf 'Someone else publishes.\n' | sp --session Still >/dev/null 2>&1
+is "an abandoned stream is reaped entirely" \
+   "$([ -e "$TMP/state/Gone" ] && echo present || echo gone)" "gone"
+is "the live stream is untouched" \
+   "$([ -d "$TMP/state/Still" ] && echo present || echo gone)" "present"
 
 # ---- refuses input with nothing to say -----------------------------------------------
 OUT="$(printf '```\nonly code\n```\n' | sp --session Empty 2>&1)"; RC=$?
@@ -287,13 +376,16 @@ like "a summary links back to the list" "$(curl -sf "http://127.0.0.1:$PORT/s/Bl
 PAGE="$(curl -sf "http://127.0.0.1:$PORT/s/Blocks")"
 like "summary page has a sentence"     "$PAGE" "First sentence."
 like "sentences carry a time offset" "$PAGE" "data-at='"
+# A whole sentence is a tap target, so an anchor inside one would otherwise bubble into
+# seek() and start playing the paragraph as you navigate away.
+like "a link inside a sentence does not seek" "$PAGE" "closest('a')"
 like "page holds one audio element"  "$PAGE" "<audio id=au"
 # Seeking exactly onto a boundary clips the first syllable, so the player starts early.
 like "seeks land before the boundary" "$PAGE" "LEAD=0.35"
 # Speed is applied at playback and labelled in absolute terms, derived from the rate the
 # file was baked at -- so the labels stay honest if RATE changes.
 like "speed control is present"   "$PAGE" "class=spd"
-like "and knows the baked speed"  "$PAGE" "data-baked='1.842'"
+like "and knows the baked speed"  "$PAGE" "data-baked='1.681'"
 like "shown block is rendered"         "$PAGE" "rm -rf /nope"
 like "shown block is labelled"         "$PAGE" "shown, not spoken"
 
@@ -306,11 +398,29 @@ RANGE="$(curl -s -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-9' \
          "http://127.0.0.1:$PORT/a/Blocks/$TS/audio.wav")"
 is "range request returns 206" "$RANGE" "206"
 
-for BAD in "/a/../../../etc/passwd" "/s/..%2f..%2fetc" "/a/Blocks/$TS/../../../../etc/passwd"; do
-  C="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$BAD")"
+# These MUST use --path-as-is: curl normalises "..' out of a URL before sending, so
+# without it the earlier version of this loop was testing nothing. The guard's character
+# class permits "." and "-", so ".." matched it and `/a/../../x.wav` served a file from
+# outside the store — 200, with bytes. Dot components are now rejected outright and every
+# route re-checks that its resolved path is still inside the store.
+for BAD in "/a/../../../etc/passwd" "/s/..%2f..%2fetc" "/a/Blocks/$TS/../../../../etc/passwd" \
+           "/a/../../probe.wav" "/s/.." "/s/../.." "/r/../../x/1" "/a/./../probe.wav" \
+           "/v/../../x/en_US-amy-medium"; do
+  C="$(curl -s --path-as-is -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT$BAD")"
   case "$C" in 400|404) ok "traversal refused: $BAD ($C)" ;;
                *) fail "traversal refused: $BAD" "got $C" ;; esac
 done
+
+# A four-segment audio URL is the shape that got through: it passed the length check and
+# every component passed the alphabet check.
+PLANT="$TMP/outside.wav"
+python3 -c "
+import wave,sys
+w=wave.open(sys.argv[1],'wb'); w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050)
+w.writeframes(b'\0\0'*100); w.close()" "$PLANT"
+C="$(curl -s --path-as-is -o /dev/null -w '%{http_code}' \
+     "http://127.0.0.1:$PORT/a/../../outside.wav")"
+is "the exact bug that was reported is closed" "$C" "400"
 
 C="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/s/NoSuchSession")"
 is "unknown session is 404" "$C" "404"
@@ -346,5 +456,63 @@ is "re-speak leaves one joined file" \
 
 C="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/v/Opts/$TS/not-a-voice")"
 is "unknown voice is rejected" "$C" "400"
+
+# ---- heard state ---------------------------------------------------------------------
+# Kept in the summary's own metadata, not in browser storage: the same state on the phone
+# and in a desktop browser, and it dies with the summary rather than outliving it.
+BTS="$(basename "$(dirname "$(meta Blocks)")")"
+is "a summary starts unheard" \
+   "$(python3 -c "
+import json,sys;print(json.load(open(sys.argv[1])).get('read', False))" "$(meta Blocks)")" "False"
+like "the page offers the checkbox" "$(curl -sf "http://127.0.0.1:$PORT/s/Blocks")" "class='heard"
+
+C="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/r/Blocks/$BTS/1")"
+is "marking heard succeeds" "$C" "200"
+is "and it persisted" \
+   "$(python3 -c "
+import json,sys;print(json.load(open(sys.argv[1]))['read'])" "$(meta Blocks)")" "True"
+like "the overview dims it"  "$(curl -sf "http://127.0.0.1:$PORT/all")" "card done"
+# The tick is always rendered (it is the tap target); "done" is what colours it.
+like "and the heard card keeps its toggle" \
+     "$(curl -sf "http://127.0.0.1:$PORT/all")" "<button class=mark"
+
+C="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/r/Blocks/$BTS/0")"
+is "unmarking works too" \
+   "$(python3 -c "
+import json,sys;print(json.load(open(sys.argv[1]))['read'])" "$(meta Blocks)")" "False"
+C="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/r/Nope/x/1")"
+is "marking something absent is 404" "$C" "404"
+
+# The page carries the control at BOTH ends, and a back link beside the title.
+HPAGE="$(curl -sf "http://127.0.0.1:$PORT/s/Blocks")"
+is "the checkbox appears twice" \
+   "$(printf '%s' "$HPAGE" | grep -o "class='heard" | wc -l | tr -d ' ')" "2"
+is "a back link sits beside each heard row" \
+   "$(printf '%s' "$HPAGE" | grep -o "class=back" | wc -l | tr -d ' ')" "2"
+
+# Auto-mark on finishing, but a deliberate choice outranks it PERMANENTLY: unchecking
+# something you have already heard means "come back to it", and re-marking erases that.
+rd() { python3 -c "
+import json,sys
+m=json.load(open(sys.argv[1])); print(str(m.get('read',False))+'/'+str(m.get('manual',False)))" "$1"; }
+printf 'A fresh untouched summary.\n' | sp --session Auto >/dev/null 2>&1
+ATS="$(basename "$(dirname "$(meta Auto)")")"
+curl -s -o /dev/null "http://127.0.0.1:$PORT/r/Auto/$ATS/auto"
+is "auto marks an untouched summary" "$(rd "$(meta Auto)")" "True/False"
+
+curl -s -o /dev/null "http://127.0.0.1:$PORT/r/Auto/$ATS/0"
+is "a manual uncheck sticks and is recorded" "$(rd "$(meta Auto)")" "False/True"
+
+curl -s -o /dev/null "http://127.0.0.1:$PORT/r/Auto/$ATS/auto"
+is "auto no longer overrides that choice" "$(rd "$(meta Auto)")" "False/True"
+
+curl -s -o /dev/null "http://127.0.0.1:$PORT/r/Auto/$ATS/1"
+is "but the checkbox still works" "$(rd "$(meta Auto)")" "True/True"
+
+# The overview tick toggles without opening the summary.
+OPAGE2="$(curl -sf "http://127.0.0.1:$PORT/all")"
+like "overview has a tap target"  "$OPAGE2" "class=mark"
+like "and it knows where to post" "$OPAGE2" "data-url='/r/"
+like "the card body still links"  "$OPAGE2" "class=body href='/s/"
 
 finish
