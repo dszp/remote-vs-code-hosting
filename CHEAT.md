@@ -236,6 +236,18 @@ nothing — and its socket API has no kick-client request.
   `journalctl -u dnf-automatic.service -n 30` · check now: `dnf needs-restarting -r` (exit 1 = reboot needed).
 - Reboot when ready: `sudo reboot` (or `sudo systemctl reboot`).
 
+### moshi-hook (the Moshi app tells you the **macOS** recipe — ignore it here)
+- No brew on the VM. `brew upgrade moshi-hook` → **`moshi-hook update`**;
+  `brew services restart moshi-hook` → **`systemctl --user restart moshi-hook.service`**
+  (a **user** unit — `sudo systemctl` finds nothing).
+- The updater does **not** restart the daemon; until you do, the old binary keeps serving.
+  `moshi-hook --version` = the file on disk, **`moshi-hook probe`** = what's actually running.
+- Verify: `moshi-hook probe` (running/gateway true) + `moshi-hook status` (`paired`, `claude
+  current`). Hooks not `current`? **You** must run `moshi-hook install` — it edits
+  `~/.claude/settings.json`, which the auto-mode classifier blocks Claude from touching.
+- Updates leave the unit's `10-path.conf` drop-in (the tmux 3.5a `PATH` pin) alone. Back the
+  binary up first — the update is in-place; rollback is `moshi-hook update --version v<old>`.
+
 ## Memory / swap
 - The VM has a **swapfile** (`/swapfile`, sized to RAM) so a memory spike pages instead of
   OOM-killing every session — `10-base.sh` provisions it; `swap-notify.timer` warns before it fills.
