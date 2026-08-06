@@ -125,16 +125,16 @@ VOICES = Path(os.environ.get("SPEAK_VOICES", "/usr/local/share/piper-voices"))
 
 DEFAULTS = {
     "VOICE": "en_US-amy-medium",
-    # length_scale: LOWER is faster. 0.543 is about 1.84x, chosen by ear on the device.
+    # length_scale: LOWER is faster. 0.595 is about 1.68x, chosen by ear on the device.
     # Slow synthesis exposes its own flatness -- voices rejected at natural pace became
     # acceptable fast -- so this is a quality setting as much as a speed one. Baked in
     # rather than applied at playback: piper's duration model produces more natural fast
     # speech than time-stretching, and a baked rate also applies in the car, where the
     # page's control is out of reach.
-    "RATE": "0.543",
+    "RATE": "0.595",
     "PORT": "8790",
-    "KEEP": "10",     # summaries kept per session
-    "DAYS": "7",      # hard age cap
+    "KEEP": "10",     # summaries kept per AGENT stream (session--workspace--tab)
+    "DAYS": "3",      # hard age cap, swept on every write by any agent
 }
 
 
@@ -199,38 +199,106 @@ def safe(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "-", name)[:64] or "session"
 
 
-def where() -> dict:
-    """Enough about this session to tell it apart from a dozen others.
-
-    A bare session name is not enough when many sessions run at once: several can share a
-    project and differ only by which tab they are in or which directory they sit in.
-    moshi-hook already resolves the multiplexer's view -- herdr tab and agent names
-    included -- so ask it rather than reimplementing that lookup, and degrade to the
-    environment when it is absent.
-    """
-    info: dict = {}
+def _run(cmd: list[str]) -> str:
     try:
-        out = subprocess.run(["moshi-hook", "context"], capture_output=True,
-                             text=True, timeout=5)
-        if out.returncode == 0:
-            ctx = json.loads(out.stdout or "{}")
-            h = ctx.get("herdr") or {}
-            a = ctx.get("agent") or {}
-            g = ctx.get("git") or {}
-            info = {
-                "tab": h.get("tab") or "",
-                "pane": h.get("paneId") or "",
-                "agent": a.get("name") or "",
-                "model": a.get("modelName") or "",
-                "branch": g.get("branch") or "",
-                "dirty": bool(g.get("dirty")),
-                "cwd": ctx.get("cwd") or str(Path.cwd()),
-                "mux": ctx.get("kind") or "",
-            }
-    except (OSError, subprocess.SubprocessError, ValueError):
-        pass
-    info.setdefault("cwd", str(Path.cwd()))
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _herdr_names(session: str, ws_id: str, tab_id: str) -> tuple[str, str]:
+    """Turn herdr ids into the names a human uses, by asking herdr about THIS session."""
+    ws_name = tab_name = ""
+    if ws_id:
+        try:
+            d = json.loads(_run(["herdr", "workspace", "list", "--session", session]) or "{}")
+            for w in (d.get("result") or {}).get("workspaces", []):
+                if w.get("workspace_id") == ws_id:
+                    ws_name = w.get("label") or ""
+                    break
+        except ValueError:
+            pass
+    if tab_id:
+        try:
+            d = json.loads(_run(["herdr", "tab", "list", "--session", session]) or "{}")
+            for tb in (d.get("result") or {}).get("tabs", []):
+                if tb.get("tab_id") == tab_id:
+                    tab_name = tb.get("name") or tb.get("label") or ""
+                    break
+        except ValueError:
+            pass
+    return ws_name, tab_name
+
+
+def where() -> dict:
+    """Identify the pane that is CALLING, not the one on screen.
+
+    This must never consult a focus-derived source. `moshi-hook context` resolves its herdr
+    fields from the focused pane while taking cwd from the caller, and that mixed provenance
+    silently filed one agent's summaries into another agent's stream -- whichever tab was
+    being looked at at the time -- so two agents interleaved and evicted each other under the
+    retention cap. A wrong label is cosmetic; a shared stream loses work.
+
+    herdr exports the calling pane's own ids into its environment, which is authoritative no
+    matter what is focused. Names come from asking herdr to resolve those ids; git and cwd
+    are read locally. Nothing here depends on what is on screen.
+    """
+    info: dict = {"cwd": os.getcwd()}
+
+    branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    if branch and branch != "HEAD":
+        info["branch"] = branch
+        info["dirty"] = bool(_run(["git", "status", "--porcelain"]))
+
+    pane = os.environ.get("HERDR_PANE_ID", "")
+    if pane:
+        session = os.environ.get("HERDR_SESSION", "")
+        ws_id = os.environ.get("HERDR_WORKSPACE_ID", "")
+        tab_id = os.environ.get("HERDR_TAB_ID", "")
+        ws_name, tab_name = _herdr_names(session, ws_id, tab_id)
+        info.update({
+            "mux": "herdr",
+            "pane": pane,
+            "workspace": ws_name or ws_id,
+            "tab": tab_name or tab_id,
+        })
+        return info
+
+    if os.environ.get("TMUX"):
+        # -t the caller's own pane: without it tmux answers for the active window.
+        target = os.environ.get("TMUX_PANE", "")
+        args = ["tmux", "display-message", "-p"] + (["-t", target] if target else [])
+        info.update({
+            "mux": "tmux",
+            "pane": target,
+            "tab": _run(args + ["#W"]),
+        })
     return info
+
+
+def identity(w: dict, session: str) -> tuple[str, str]:
+    """(display name, storage slug) for the agent publishing this summary.
+
+    Session alone is not an identity: one herdr session holds several workspaces, each
+    holding several tabs, each typically one agent. Keyed on the session, six agents in one
+    workspace share a stream and evict each other under the retention cap.
+
+    Tab alone is not an identity either -- `cli` exists in three different workspaces here.
+    So the slug is session, workspace and tab together, with duplicates collapsed (a
+    workspace named after its session is the common case) and the pane id standing in when
+    a tab has no name.
+    """
+    parts, seen = [], set()
+    for x in (session, w.get("workspace"), w.get("tab") or w.get("pane")):
+        x = (x or "").strip()
+        if x and x.lower() not in seen:
+            seen.add(x.lower())
+            parts.append(x)
+    # The FULL identity is the name -- session, workspace and tab. Dropping the leading
+    # part made siblings from different sessions read identically on the overview, which
+    # is exactly the collision this key exists to prevent.
+    return " / ".join(parts), "--".join(safe(x) for x in parts)
 
 
 def subpath(cwd: str, session: str) -> str:
@@ -523,8 +591,13 @@ def render(blocks: list[dict], out: Path, cfg: dict, voice: str | None) -> int:
 
 # ---------------------------------------------------------------- store
 
-def store(session: str, blocks: list[dict], cfg: dict, voice: str | None) -> Path:
-    sess = safe(session)
+def store(session: str, blocks: list[dict], cfg: dict, voice: str | None,
+          forced: bool = False) -> Path:
+    w = where()
+    if forced:
+        display, sess = session, safe(session)
+    else:
+        display, sess = identity(w, session)
     ts = time.strftime("%Y%m%d-%H%M%S")
     out = STATE / sess / ts
     out.mkdir(parents=True, exist_ok=True)
@@ -537,9 +610,9 @@ def store(session: str, blocks: list[dict], cfg: dict, voice: str | None) -> Pat
             title = b["sentences"][0]
             break
 
-    w = where()
     meta = {
-        "session": session,
+        "session": display,
+        "root": session,
         "slug": sess,
         "ts": ts,
         "created": time.time(),
@@ -580,6 +653,15 @@ def prune(cfg: dict) -> int:
             if old or stale:
                 shutil.rmtree(d, ignore_errors=True)
                 removed += 1
+        # An agent that stops publishing leaves its stream behind. Its summaries age out
+        # like anyone's, but without this the empty directory outlives it forever -- and
+        # with the cap now PER AGENT rather than shared, abandoned streams accumulate
+        # instead of being evicted by newer ones.
+        if not summaries(sess):
+            try:
+                sess.rmdir()
+            except OSError:
+                pass
     return removed
 
 
@@ -625,9 +707,18 @@ h2.path{font-size:.95rem;font-weight:600;opacity:.78;margin:0 0 2px;
 .who{font-size:.8rem;opacity:.62;margin:0 0 2px}
 .sub{opacity:.6;font-size:.88rem;margin:0 0 20px}
 a{color:#2563eb;text-decoration:none}
-.card{display:block;padding:14px 15px;margin:0 0 11px;border-radius:13px;
-      background:rgba(127,127,127,.12);color:inherit}
-.card .n{font-weight:600;font-size:1rem}
+.card{display:flex;align-items:stretch;margin:0 0 11px;border-radius:13px;
+      background:rgba(127,127,127,.12);color:inherit;overflow:hidden}
+.card .body{flex:1;min-width:0;padding:14px 4px 14px 15px;color:inherit;
+            text-decoration:none;display:block}
+/* A deliberately wide target: this is tapped one-handed, often while walking. */
+.card .mark{flex:0 0 62px;border:0;background:transparent;color:inherit;
+            font-size:1.3rem;opacity:.22;cursor:pointer;
+            border-left:1px solid rgba(127,127,127,.18)}
+.card.done .mark{opacity:1;color:#22c55e}
+.card .n{font-weight:600;font-size:1.02rem;line-height:1.35}
+.card.done .body{opacity:.45}
+.card.done .n{font-weight:500}
 .card .m{font-size:.82rem;opacity:.6;margin-top:2px}
 .card .t{font-size:.9rem;opacity:.85;margin-top:6px}
 .sent{display:inline;padding:2px 0;border-radius:4px;cursor:pointer;
@@ -639,6 +730,21 @@ a{color:#2563eb;text-decoration:none}
 .voices a{padding:5px 10px;border-radius:99px;background:rgba(127,127,127,.16);
           color:inherit;opacity:.7}
 .voices a.cur{background:rgba(37,99,235,.26);opacity:1;font-weight:700}
+/* Back pairs with the heard control at BOTH ends, so whichever end you are at, the
+   two things you might want next are side by side and the same shape. */
+.row{display:flex;gap:9px;align-items:stretch;margin:22px 0 0}
+.row .heard{flex:1;margin:0}
+.back{flex:0 0 auto;display:flex;align-items:center;padding:13px 15px;border-radius:12px;
+      background:rgba(127,127,127,.16);color:inherit;font-size:.9rem;font-weight:600;
+      text-decoration:none;white-space:nowrap}
+.heard{display:flex;align-items:center;gap:10px;margin:22px 0 0;padding:13px 14px;
+       border-radius:12px;background:rgba(127,127,127,.12);cursor:pointer;
+       font-size:.92rem;user-select:none}
+.heard .box{width:20px;height:20px;border-radius:6px;flex:0 0 20px;
+            border:2px solid rgba(127,127,127,.55);display:flex;align-items:center;
+            justify-content:center;font-size:.8rem;color:#fff}
+.heard.on .box{background:#22c55e;border-color:#22c55e}
+.heard.on{opacity:.72}
 .spd{display:flex;flex-wrap:wrap;gap:6px;margin:26px 0 4px;font-size:.8rem}
 .spd button{padding:5px 10px;border-radius:99px;border:0;font-size:.8rem;
             background:rgba(127,127,127,.16);color:inherit;opacity:.7}
@@ -719,13 +825,13 @@ PLAYER_JS = """
   var spd=document.getElementById('spd');
   if(spd){
     var baked=parseFloat(spd.dataset.baked)||1.39;
-    var want=parseFloat(localStorage.getItem('speakSpeed'))||baked;
+    var want=parseFloat(localStorage.getItem('speakSpeed2'))||baked;
     var opts=[baked-0.6,baked-0.45,baked-0.3,baked-0.15,baked,baked+0.15];
     opts.forEach(function(s){
       var b=document.createElement('button');
       b.textContent=s.toFixed(2).replace(/0$/,'')+'\\u00d7';
       b.onclick=function(){
-        want=s;localStorage.setItem('speakSpeed',s);
+        want=s;localStorage.setItem('speakSpeed2',s);
         audio.playbackRate=s/baked;mark();
       };
       b._s=s;spd.appendChild(b);
@@ -738,6 +844,32 @@ PLAYER_JS = """
     audio.playbackRate=want/baked;mark();
   }
 
+  // Heard state. Kept on the server so it is the same on every device, and applied
+  // optimistically so a tap feels instant on a phone.
+  var boxes=[].slice.call(document.querySelectorAll('.heard'));
+  if(boxes.length){
+    var on=boxes[0].classList.contains('on');
+    var paint=function(){
+      boxes.forEach(function(b){
+        b.className='heard'+(on?' on':'');
+        b.querySelector('.lab').textContent=on?'Heard':'Mark as heard';
+      });
+    };
+    var send=function(what){
+      fetch(boxes[0].dataset.url+'/'+what,{method:'GET'}).catch(function(){});
+    };
+    paint();
+    // One state, two controls -- top and bottom stay in step without a reload.
+    boxes.forEach(function(b){
+      b.addEventListener('click',function(){on=!on;paint();send(on?1:0)});
+    });
+    // Finishing marks it, but only until a deliberate choice is made: from then on the
+    // server ignores the automatic mark, so unchecking something you have heard sticks.
+    audio.addEventListener('ended',function(){
+      if(!on){on=true;paint();send('auto')}
+    });
+  }
+
   play.addEventListener('click',function(){audio.paused?audio.play():audio.pause()});
   document.getElementById('next').addEventListener('click',function(){seek(i+1)});
   document.getElementById('prev').addEventListener('click',function(){
@@ -746,8 +878,30 @@ PLAYER_JS = """
     var s=at[i]||0;
     seek(audio.currentTime-s>1.5?i:i-1);   // mid-sentence "prev" means say that again
   });
-  sents.forEach(function(s,j){s.addEventListener('click',function(){seek(j)})});
+  sents.forEach(function(s,j){s.addEventListener('click',function(e){
+    // A link inside a sentence must open, not start reading the sentence it sits in.
+    // The whole sentence is a tap target, so without this the anchor's click bubbles
+    // straight into seek() and the paragraph starts playing as you leave the page.
+    if(e.target.closest && e.target.closest('a'))return;
+    seek(j);
+  })});
   paint();
+})();
+"""
+
+
+INDEX_JS = """
+(function(){
+  [].slice.call(document.querySelectorAll('.card .mark')).forEach(function(b){
+    b.addEventListener('click',function(e){
+      // The tick sits inside the card but must not follow the card's link.
+      e.preventDefault();e.stopPropagation();
+      var card=b.closest('.card');
+      var on=!card.classList.contains('done');
+      card.className='card'+(on?' done':'');
+      fetch(card.dataset.url+'/'+(on?1:0),{method:'GET'}).catch(function(){});
+    });
+  });
 })();
 """
 
@@ -809,18 +963,21 @@ def index_page() -> bytes:
             more = f" &middot; {n} kept" if n > 1 else ""
             w = m.get("where") or {}
             ident = " &middot; ".join(html.escape(b) for b in
-                                      (m.get("path"), w.get("tab"), w.get("agent")) if b)
+                                      (m.get("path"), w.get("pane")) if b)
+            done = " done" if m.get("read") else ""
             rows.append(
-                f"<a class=card href='/s/{html.escape(m['slug'])}'>"
+                f"<div class='card{done}' data-url='/r/{html.escape(m['slug'])}/{m['ts']}'>"
+                f"<a class=body href='/s/{html.escape(m['slug'])}'>"
                 f"<div class=n>{html.escape(m['session'])}</div>"
                 + (f"<div class=who>{ident}</div>" if ident else "") +
                 f"<div class=m>{ago(m['created'])} &middot; {m['sentences']} sentences{more}</div>"
                 f"<div class=t>{html.escape(m['title'][:130])}</div></a>"
+                "<button class=mark aria-label='mark heard'>&#10003;</button></div>"
             )
     body = ("<h1>Claude summaries</h1>"
-            "<p class=sub>Newest first. Tap a session to listen and read along.</p>"
+            "<p class=sub>Newest first. Tap to listen; tap the tick to mark it heard.</p>"
             + ("".join(rows) or "<p class=sub>Nothing yet.</p>"))
-    return page("Claude summaries", body)
+    return page("Claude summaries", body, INDEX_JS)
 
 
 def summary_page(m: dict, base: str, older: list[Path]) -> bytes:
@@ -862,7 +1019,7 @@ def summary_page(m: dict, base: str, older: list[Path]) -> bytes:
 
     # Identity, most-specific last: which project, where in it, which tab/agent. With a
     # dozen sessions running, the project name alone does not identify anything.
-    bits = [b for b in (w.get("tab"), w.get("agent"), w.get("model")) if b]
+    bits = [b for b in (w.get("mux"), w.get("pane")) if b]
     if w.get("branch"):
         bits.append(w["branch"] + ("*" if w.get("dirty") else ""))
     head = f"<h1>{html.escape(m['session'])}</h1>"
@@ -870,13 +1027,25 @@ def summary_page(m: dict, base: str, older: list[Path]) -> bytes:
         head += f"<h2 class=path>{html.escape(m['path'])}</h2>"
     if bits:
         head += f"<p class=who>{html.escape(' · '.join(bits))}</p>"
+    # Back sits beside the title rather than under it: it is the one control you want
+    # before reading anything, and at the top of a long page it must not be scrolled to.
+
 
     body = (head +
             f"<p class=sub>{ago(m['created'])} &middot; {m['sentences']} sentences &middot; "
             f"<a href='/all'>all sessions</a></p>"
+            + (f"<div class=row><a class=back href='/all'>&larr; All</a>"
+               f"<div class='heard{' on' if m.get('read') else ''}' "
+               f"data-url='/r/{m['slug']}/{m['ts']}'>"
+               "<span class=box>&#10003;</span><span class=lab></span></div></div>") +
             f"<div class=voices>{strip}</div>"
             + "".join(out)
-            + f"<div class=spd id=spd data-baked='{1.0 / float(m.get('rate', 0.543)):.3f}'>"
+
+            + (f"<div class=row><a class=back href='/all'>&larr; All</a>"
+               f"<div class='heard{' on' if m.get('read') else ''}' "
+               f"data-url='/r/{m['slug']}/{m['ts']}'>"
+               "<span class=box>&#10003;</span><span class=lab></span></div></div>")
+            + f"<div class=spd id=spd data-baked='{1.0 / float(m.get('rate', 0.595)):.3f}'>"
               "<span style='opacity:.5;align-self:center;margin-right:2px'>speed</span>"
               "</div>"
             + hist +
@@ -889,6 +1058,19 @@ def summary_page(m: dict, base: str, older: list[Path]) -> bytes:
 
 
 # ---------------------------------------------------------------- server
+
+def inside(path: Path) -> bool:
+    """True when `path` really is under the store, after symlinks and dots resolve.
+
+    The component check should make this unreachable; it is here because a single
+    permissive character class was enough to defeat that check once already, and the
+    consequence was reading a file from outside the store.
+    """
+    try:
+        return STATE.resolve() in path.resolve().parents or path.resolve() == STATE.resolve()
+    except OSError:
+        return False
+
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -939,8 +1121,11 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         parts = [p for p in path.split("/") if p]
 
-        # No traversal: every component is matched against a fixed alphabet.
-        if any(not re.fullmatch(r"[A-Za-z0-9._-]+", p) for p in parts):
+        # No traversal. The alphabet alone is NOT enough: it permits "." and "-", so ".."
+        # matches it happily, and `/a/../../x.wav` served a file from outside the store.
+        # Reject dot components outright, and check the resolved path below as well.
+        if any(not re.fullmatch(r"[A-Za-z0-9._-]+", p) or p in (".", "..")
+               for p in parts):
             return self._send(400, b"bad path", "text/plain")
 
         if not parts:
@@ -958,7 +1143,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if parts[0] == "s" and len(parts) in (2, 3):
             sess = STATE / parts[1]
-            if not sess.is_dir():
+            if not sess.is_dir() or not inside(sess):
                 return self._send(404, page("not found", "<h1>No such session</h1>"),
                                   "text/html; charset=utf-8")
             got = summaries(sess)
@@ -980,7 +1165,7 @@ class Handler(BaseHTTPRequestHandler):
         # and a link is the only thing that is one tap on a phone.
         if parts[0] == "v" and len(parts) == 4:
             d = STATE / parts[1] / parts[2]
-            if not (d / "meta.json").exists():
+            if not (d / "meta.json").exists() or not inside(d):
                 return self._send(404, b"not found", "text/plain")
             cfg = config()
             if not rerender(d, parts[3], cfg):
@@ -992,9 +1177,33 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        # /r/<slug>/<ts>/<0|1> — mark heard or unheard. The flag lives in the summary's
+        # own metadata rather than in browser storage, so it is the same on the phone and
+        # in a desktop browser, and it dies with the summary exactly as asked.
+        if parts[0] == "r" and len(parts) == 4 and parts[3] in ("0", "1", "auto"):
+            f = STATE / parts[1] / parts[2] / "meta.json"
+            if not f.is_file() or not inside(f):
+                return self._send(404, b"not found", "text/plain")
+            try:
+                m = json.loads(f.read_text())
+                if parts[3] == "auto":
+                    # Finishing playback marks it -- but a deliberate choice outranks the
+                    # automation permanently. Unchecking something you have heard is a
+                    # decision (come back to it), and re-marking it would erase that.
+                    if m.get("manual"):
+                        return self._send(200, b"manual", "text/plain")
+                    m["read"] = True
+                else:
+                    m["read"] = parts[3] == "1"
+                    m["manual"] = True
+                f.write_text(json.dumps(m, indent=1))
+            except (OSError, ValueError):
+                return self._send(500, b"could not update", "text/plain")
+            return self._send(200, b"ok", "text/plain")
+
         if parts[0] == "a" and len(parts) == 4 and parts[3].endswith(".wav"):
             wav = STATE / parts[1] / parts[2] / parts[3]
-            if not wav.is_file():
+            if not wav.is_file() or not inside(wav):
                 return self._send(404, b"not found", "text/plain")
             return self._wav(wav)
 
@@ -1069,7 +1278,7 @@ def main(argv: list[str]) -> int:
     if not any(b["kind"] == "prose" for b in blocks):
         die("no prose to speak (everything was a code block or table)")
 
-    out = store(session or session_name(), blocks, cfg, voice)
+    out = store(session or session_name(), blocks, cfg, voice, forced=bool(session))
     m = load(out) or {}
     print(f"http://127.0.0.1:{cfg['PORT']}/s/{m.get('slug', '')}"
           f"   ({m.get('sentences', 0)} sentences, {m.get('voice', '')})")
@@ -1101,19 +1310,19 @@ else
 # Default voice. Change with: speak-phone voice <name>
 VOICE=en_US-amy-medium
 
-# Speed. LOWER is faster; 0.543 is about 1.84x, chosen by ear on the device. Slow
+# Speed. LOWER is faster; 0.595 is about 1.68x, chosen by ear on the device. Slow
 # synthesis sounds flatter, so this is a quality setting as much as a speed one — voices
 # rejected at 1.0 were fine fast. The page also has a playback-speed control, but baking
 # it in sounds better and applies in the car too.
-RATE=0.543
+RATE=0.595
 
 # Loopback port the read-along page is served on.
 PORT=8790
 
-# Retention: summaries kept per session, and a hard age cap in days. Pruned on write,
+# Retention: summaries kept per AGENT stream, and a hard age cap in days. Pruned on write,
 # so there is no timer to maintain.
 KEEP=10
-DAYS=7
+DAYS=3
 CONFEOF
 fi
 
