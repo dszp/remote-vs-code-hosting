@@ -221,6 +221,27 @@ nothing — and its socket API has no kick-client request.
   (live-reloaded). Full notes + snippet: README **B**.
 - Runs **fullscreen with the mouse enabled** (`"tui": "fullscreen"`, no `CLAUDE_CODE_DISABLE_MOUSE`). To click Claude's UI cleanly, hand it the mouse: `Ctrl-b m` to turn **tmux** mouse OFF (else the two fight → `aN;NaNM` garbage). For wheel scroll without clicks instead, set `CLAUDE_CODE_DISABLE_MOUSE_CLICKS=1`. **Copy from Claude:** Shift-drag (ghostty native) always works; over SSH a tmux copy also hits the local clipboard (OSC 52).
 
+## Listen to a summary on your phone (`speak-phone`)
+Ask Claude to read a turn to you and it renders the prose to audio **on the VM** and serves a
+**read-along page**: text on screen, the sentence being spoken highlighted, tap a sentence to
+jump, real scrubber. Open it from your terminal app's **server list** — it shows as
+*Claude summaries*. All local (loopback only, reached through the SSH session you already
+have); no cloud, no token, works with the laptop asleep.
+- Say *"speak that"* for one turn, or *"read these to me until I say stop"* to leave it on.
+- **Fenced blocks and tables are shown but NEVER spoken** — that's how commands and paths
+  stay visible without being read aloud. A bulleted list answering a question is spoken as
+  "Option one…", numbered on screen only.
+- `speak-phone voices` (`*` = default) · `speak-phone voice <name>` · `speak-phone url`.
+  Or just **tap a voice** in the strip at the top of the page: it re-speaks that summary and
+  makes it the default. Installed: **amy** (default), **hfc_female** (fastest), **ryan**
+  (male), **jenny_dioco** (accented backup). ~2s to render, everything at 1.4x.
+- Header tells sessions apart: project · path below it · tab · agent · model · branch.
+- Settings `~/.config/remote-vs-code/speak.env` (voice, rate, port, `KEEP`/`DAYS` retention —
+  pruned on write). Service: `systemctl --user status speak-phone`. Deploy: `87-speak-phone.sh`.
+- Why not the browser's own voice: iOS withholds its good voices from web pages (in Safari
+  too), so anything spoken in-page sounds robotic. Rendering on the box fixes that and is
+  what gives you a scrubber.
+
 ## Secrets (`op` proxy)
 - `op-mode status` — current mode + whether the Mac resolver socket is present
 - **mac mode** (default): `op read 'op://…'` or `op run --env-file=.env -- wrangler deploy`

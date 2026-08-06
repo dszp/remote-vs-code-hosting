@@ -29,6 +29,8 @@ LIB_DIR=/tmp/rvc-build HOME_DIR=/tmp/rvc-build UNIT=/tmp/rvc-build/unit.service 
 # 95 needs sudo (it installs a system unit) and always writes the dev user's
 # /usr/local/bin/swap-check.sh; SWAP_CHECK_COPY additionally drops a copy for the tests.
 sudo SWAP_CHECK_COPY="$PWD/deploy/build/swap-check.sh" bash deploy/95-swap-monitor.sh DEV_USER="$(id -un)"
+# 87 downloads ~300MB of voice models on first run; re-runs skip what is already there.
+sudo SPEAK_PHONE_COPY="$PWD/deploy/build/speak-phone" bash deploy/87-speak-phone.sh DEV_USER="$(id -un)"
 sudo chown "$(id -un)" deploy/build/*
 bash tests/run-all.sh
 ```
