@@ -155,6 +155,75 @@ is "the calling pane's own id is used" \
 is "a different pane resolves differently" \
    "$(paneid Sess w1 w1:tB w1:pF)" "herdr|w1:pF|w1"
 
+# ---- names survive a dead herdr API socket -------------------------------------------
+# Detaching every client at once takes the API listener down on every long-running session
+# and it does not come back when they are reattached. The servers keep running, so nothing
+# looks broken -- but every name lookup returned nothing and the raw ids leaked into the
+# slug, splitting a live stream in two (`NetSapiens--super-portal` became
+# `NetSapiens--w1--w1-tC`). session.json is written by the server throughout, so these run
+# with no `herdr` binary reachable at all.
+HH="$TMP/herdrhome"
+mkdir -p "$HH/.config/herdr/sessions/Fixture"
+cat > "$HH/.config/herdr/sessions/Fixture/session.json" <<'JSON'
+{"version":3,"workspaces":[
+ {"id":"w1","custom_name":null,"identity_cwd":"/home/x/workspace/NetSapiens",
+  "public_tab_numbers":[4,12,10],
+  "tabs":[{"custom_name":"subscription-webhooks"},
+          {"custom_name":"super-portal"},
+          {"custom_name":"rt-custom"}]},
+ {"id":"w6","custom_name":"Renamed","identity_cwd":"/home/x/workspace/OneBill",
+  "public_tab_numbers":[1],
+  "tabs":[{"custom_name":"OneBill"}]}]}
+JSON
+
+# No herdr on PATH: if the file is not consulted, every one of these falls back to ids.
+names() { # session ws tab -> "<workspace>|<tab>"
+  HOME="$HH" PATH="$TMP/bin:/usr/bin:/bin" python3 -c "
+import importlib.util
+s=importlib.util.spec_from_loader('sp',None); m=importlib.util.module_from_spec(s)
+exec(open('$SP').read().split('if __name__')[0], m.__dict__)
+print('|'.join(m._herdr_names('$1','$2','$3')))"
+}
+
+# Tab ids carry the public tab number in HEX. Read as decimal, `w1:tC` matches nothing and
+# `w1:t12` matches the wrong tab -- both of which look like a rename rather than a bug.
+is "a hex tab id resolves to its name" \
+   "$(names Fixture w1 w1:tC)" "NetSapiens|super-portal"
+is "a single-digit tab id resolves" \
+   "$(names Fixture w1 w1:t4)" "NetSapiens|subscription-webhooks"
+is "another hex tab id resolves" \
+   "$(names Fixture w1 w1:tA)" "NetSapiens|rt-custom"
+# A workspace usually has no name of its own; herdr labels it with its directory, and the
+# overview has to agree with the tab bar or the two cannot be matched up by eye.
+is "an unnamed workspace takes its directory" \
+   "$(names Fixture w1 w1:t4 | cut -d'|' -f1)" "NetSapiens"
+is "a named workspace keeps its name" \
+   "$(names Fixture w6 w6:t1)" "Renamed|OneBill"
+# Degrade to the id rather than to a wrong name.
+is "an unknown tab id resolves to nothing" \
+   "$(names Fixture w1 w1:tZ)" "NetSapiens|"
+is "an unknown workspace resolves to nothing" \
+   "$(names Fixture w9 w9:t1)" "|"
+is "a missing session file resolves to nothing" \
+   "$(names Absent w1 w1:t1)" "|"
+# The session name is interpolated into a path. It comes from the environment, so it is
+# not attacker-controlled, but it also must never leave the sessions directory.
+is "a session name cannot traverse" \
+   "$(names ../../../etc w1 w1:t1)" "|"
+
+# End to end: the whole path from environment to slug, with nothing to query.
+fullslug() { # session ws tab pane -> slug
+  HOME="$HH" PATH="$TMP/bin:/usr/bin:/bin" \
+  HERDR_SESSION="$1" HERDR_WORKSPACE_ID="$2" HERDR_TAB_ID="$3" HERDR_PANE_ID="$4" \
+  python3 -c "
+import importlib.util
+s=importlib.util.spec_from_loader('sp',None); m=importlib.util.module_from_spec(s)
+exec(open('$SP').read().split('if __name__')[0], m.__dict__)
+print(m.identity(m.where(), '$1')[1])"
+}
+is "a named slug is produced with no herdr server" \
+   "$(fullslug Fixture w1 w1:tC w1:pE)" "Fixture--NetSapiens--super-portal"
+
 # ---- one stream per AGENT, not per session -------------------------------------------
 # A herdr session holds several workspaces, each holding several tabs, each typically one
 # agent. Keyed on the session alone, six agents in one workspace share a stream and evict
