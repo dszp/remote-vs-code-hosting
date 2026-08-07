@@ -793,6 +793,10 @@ ol.opts li::before{content:counter(o);flex:0 0 1.4em;height:1.4em;line-height:1.
 .bar button.play{flex:1;background:#2563eb;color:#fff}
 #pos{font-size:.82rem;opacity:.65;min-width:3.4em;text-align:right;
      font-variant-numeric:tabular-nums}
+/* Mirrors #pos on the other end. When the bar is pinned this is the only way back that
+   is always on screen -- the other two scroll away with the text. */
+.allmini{font-size:.82rem;font-weight:600;opacity:.72;min-width:3.4em;text-align:left;
+         color:inherit;text-decoration:none;padding:8px 2px;white-space:nowrap}
 """
 
 PLAYER_JS = """
@@ -1069,7 +1073,8 @@ def summary_page(m: dict, base: str, older: list[Path]) -> bytes:
                f"<div class='heard{' on' if m.get('read') else ''}' "
                f"data-url='/r/{m['slug']}/{m['ts']}'>"
                "<span class=box>&#10003;</span><span class=lab></span></div></div>")
-            + ("<div class=bar><button id=prev>&#9664;</button>"
+            + ("<div class=bar><a class=allmini href='/all'>&larr; All</a>"
+               "<button id=prev>&#9664;</button>"
                "<button class=play id=play>&#9654;&#65038; Play</button>"
                "<button id=next>&#9654;</button><span id=pos>&ndash;/&ndash;</span></div>")
             + f"<div class=spd id=spd data-baked='{1.0 / float(m.get('rate', 0.595)):.3f}'>"
