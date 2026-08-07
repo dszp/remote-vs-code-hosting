@@ -349,7 +349,7 @@ is "empty input is refused" "$RC" "1"
 # every server assertion fails for reasons that have nothing to do with the code.
 PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
 printf 'PORT=%s\n' "$PORT" >> "$TMP/speak.env"
-sp serve >/dev/null 2>&1 &
+sp serve >"$TMP/server.log" 2>&1 &
 SRV=$!
 kill_server() {
   local p
@@ -379,6 +379,12 @@ like "sentences carry a time offset" "$PAGE" "data-at='"
 # A whole sentence is a tap target, so an anchor inside one would otherwise bubble into
 # seek() and start playing the paragraph as you navigate away.
 like "a link inside a sentence does not seek" "$PAGE" "closest('a')"
+# `var` is function-scoped: a second `paint` in the same script silently replaced the
+# sentence highlighter, so playback stopped highlighting entirely. One definition only.
+is "the page script defines paint once" \
+   "$(printf '%s' "$PAGE" | grep -c 'function paint()')" "1"
+is "and the heard painter has its own name" \
+   "$(printf '%s' "$PAGE" | grep -c 'var paintHeard=')" "1"
 like "page holds one audio element"  "$PAGE" "<audio id=au"
 # Seeking exactly onto a boundary clips the first syllable, so the player starts early.
 like "seeks land before the boundary" "$PAGE" "LEAD=0.35"
@@ -441,6 +447,25 @@ unlike "screen omits the spoken cue" "$OPAGE" "Option one."
 # ---- the voice strip and switching voices --------------------------------------------
 VPAGE="$(curl -sf "http://127.0.0.1:$PORT/s/Voice")"
 like "voice strip is present"       "$VPAGE" "class=voices"
+# Voice and speed are both "change it" controls, so they sit together at the end rather
+# than above the text.
+# Transport sits between the lower back/heard row and the adjustments, in the flow.
+# Pause must stay reachable partway down a long summary on a phone: tapping a sentence
+# starts playback, but nothing else stops it.
+like "transport pins on small screens" "$VPAGE" "@media(max-width:640px)"
+# Once the header scrolls away nothing names the session, and matching it in the terminal
+# app meant scrolling back to the top of a long summary.
+like "the identity sticks to the top on phones" "$VPAGE" "class=mini"
+is "the play bar precedes the speed row" \
+   "$(python3 -c "
+import sys
+h=sys.stdin.read(); print('yes' if h.index('class=bar') < h.index('class=spd') else 'no')" \
+     <<< "$VPAGE")" "yes"
+is "voices sit below the speed row" \
+   "$(python3 -c "
+import sys
+h=sys.stdin.read(); print('yes' if h.index('class=voices') > h.index('class=spd') else 'no')" \
+     <<< "$VPAGE")" "yes"
 like "current voice is marked"      "$VPAGE" "class='cur'"
 like "alternate voice is offered"   "$VPAGE" "/v/Voice/"
 
@@ -514,5 +539,11 @@ OPAGE2="$(curl -sf "http://127.0.0.1:$PORT/all")"
 like "overview has a tap target"  "$OPAGE2" "class=mark"
 like "and it knows where to post" "$OPAGE2" "data-url='/r/"
 like "the card body still links"  "$OPAGE2" "class=body href='/s/"
+
+# Surface anything the server logged: a traceback here explains a page assertion that
+# failed for no visible reason.
+if [ -s "$TMP/server.log" ]; then
+  printf '\n--- server log ---\n'; sed -n '1,40p' "$TMP/server.log"
+fi
 
 finish

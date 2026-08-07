@@ -700,7 +700,7 @@ CSS = """
 :root{color-scheme:light dark}
 *{-webkit-tap-highlight-color:transparent}
 body{font:17px/1.6 -apple-system,system-ui,sans-serif;margin:0;
-     padding:18px 16px 96px;max-width:42rem}
+     padding:18px 16px 40px;max-width:42rem}
 h1{font-size:1.16rem;margin:0 0 1px}
 h2.path{font-size:.95rem;font-weight:600;opacity:.78;margin:0 0 2px;
         font-family:ui-monospace,monospace}
@@ -726,13 +726,24 @@ a{color:#2563eb;text-decoration:none}
 .sent.on{background:rgba(37,99,235,.30)}
 .sent.done{opacity:.55}
 .sent.mute{opacity:.45;cursor:default}
-.voices{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 18px;font-size:.8rem}
+.voices{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 4px;font-size:.8rem}
 .voices a{padding:5px 10px;border-radius:99px;background:rgba(127,127,127,.16);
           color:inherit;opacity:.7}
 .voices a.cur{background:rgba(37,99,235,.26);opacity:1;font-weight:700}
 /* Back pairs with the heard control at BOTH ends, so whichever end you are at, the
    two things you might want next are side by side and the same shape. */
-.row{display:flex;gap:9px;align-items:stretch;margin:22px 0 0}
+.mini{display:none}
+@media(max-width:640px){
+  .mini{display:block;position:sticky;top:0;z-index:6;margin:-18px -16px 12px;
+        padding:9px 16px;font-size:.82rem;font-weight:600;
+        background:rgba(28,28,32,.94);backdrop-filter:blur(12px);
+        box-shadow:0 1px 0 rgba(127,127,127,.22);
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+}
+@media(max-width:640px) and (prefers-color-scheme:light){
+  .mini{background:rgba(250,250,252,.95)}
+}
+.row{display:flex;gap:9px;align-items:stretch;margin:22px 0 12px}
 .row .heard{flex:1;margin:0}
 .back{flex:0 0 auto;display:flex;align-items:center;padding:13px 15px;border-radius:12px;
       background:rgba(127,127,127,.16);color:inherit;font-size:.9rem;font-weight:600;
@@ -762,10 +773,21 @@ ol.opts li::before{content:counter(o);flex:0 0 1.4em;height:1.4em;line-height:1.
 .sent a{color:#5b9dff}
 .shown .tag{display:block;font-family:-apple-system,system-ui,sans-serif;font-size:.7rem;
             text-transform:uppercase;letter-spacing:.06em;opacity:.55;margin-bottom:7px}
-.bar{position:fixed;left:0;right:0;bottom:0;display:flex;gap:9px;align-items:center;
-     padding:11px 14px calc(11px + env(safe-area-inset-bottom));
-     background:rgba(28,28,32,.93);backdrop-filter:blur(12px)}
-@media(prefers-color-scheme:light){.bar{background:rgba(250,250,252,.94)}}
+/* In the flow on a wide screen: pinned to the viewport bottom it was stranded far from
+   everything it belongs with. On a phone it pins, because pause has to stay reachable
+   partway down a long summary -- tapping a sentence can start playback, but nothing else
+   can stop it. */
+.bar{display:flex;gap:9px;align-items:center;margin:0 0 14px}
+@media(max-width:640px){
+  .bar{position:fixed;left:0;right:0;bottom:0;z-index:5;margin:0;
+       padding:11px 14px calc(11px + env(safe-area-inset-bottom));
+       background:rgba(28,28,32,.94);backdrop-filter:blur(12px);
+       box-shadow:0 -1px 0 rgba(127,127,127,.22)}
+  body{padding-bottom:96px}
+}
+@media(max-width:640px) and (prefers-color-scheme:light){
+  .bar{background:rgba(250,250,252,.95)}
+}
 .bar button{padding:13px 15px;font-size:1rem;font-weight:600;border:0;border-radius:11px;
             background:rgba(127,127,127,.26);color:inherit}
 .bar button.play{flex:1;background:#2563eb;color:#fff}
@@ -849,7 +871,10 @@ PLAYER_JS = """
   var boxes=[].slice.call(document.querySelectorAll('.heard'));
   if(boxes.length){
     var on=boxes[0].classList.contains('on');
-    var paint=function(){
+    // NOT `paint`: `var` is function-scoped, so declaring it here overwrote the sentence
+    // highlighter's paint() for the whole script and every timeupdate repainted
+    // checkboxes instead of sentences.
+    var paintHeard=function(){
       boxes.forEach(function(b){
         b.className='heard'+(on?' on':'');
         b.querySelector('.lab').textContent=on?'Heard':'Mark as heard';
@@ -858,15 +883,15 @@ PLAYER_JS = """
     var send=function(what){
       fetch(boxes[0].dataset.url+'/'+what,{method:'GET'}).catch(function(){});
     };
-    paint();
+    paintHeard();
     // One state, two controls -- top and bottom stay in step without a reload.
     boxes.forEach(function(b){
-      b.addEventListener('click',function(){on=!on;paint();send(on?1:0)});
+      b.addEventListener('click',function(){on=!on;paintHeard();send(on?1:0)});
     });
     // Finishing marks it, but only until a deliberate choice is made: from then on the
     // server ignores the automatic mark, so unchecking something you have heard sticks.
     audio.addEventListener('ended',function(){
-      if(!on){on=true;paint();send('auto')}
+      if(!on){on=true;paintHeard();send('auto')}
     });
   }
 
@@ -1031,28 +1056,29 @@ def summary_page(m: dict, base: str, older: list[Path]) -> bytes:
     # before reading anything, and at the top of a long page it must not be scrolled to.
 
 
-    body = (head +
+    body = (f"<div class=mini>{html.escape(m['session'])}</div>" + head +
             f"<p class=sub>{ago(m['created'])} &middot; {m['sentences']} sentences &middot; "
             f"<a href='/all'>all sessions</a></p>"
             + (f"<div class=row><a class=back href='/all'>&larr; All</a>"
                f"<div class='heard{' on' if m.get('read') else ''}' "
                f"data-url='/r/{m['slug']}/{m['ts']}'>"
-               "<span class=box>&#10003;</span><span class=lab></span></div></div>") +
-            f"<div class=voices>{strip}</div>"
+               "<span class=box>&#10003;</span><span class=lab></span></div></div>")
             + "".join(out)
 
             + (f"<div class=row><a class=back href='/all'>&larr; All</a>"
                f"<div class='heard{' on' if m.get('read') else ''}' "
                f"data-url='/r/{m['slug']}/{m['ts']}'>"
                "<span class=box>&#10003;</span><span class=lab></span></div></div>")
+            + ("<div class=bar><button id=prev>&#9664;</button>"
+               "<button class=play id=play>&#9654;&#65038; Play</button>"
+               "<button id=next>&#9654;</button><span id=pos>&ndash;/&ndash;</span></div>")
             + f"<div class=spd id=spd data-baked='{1.0 / float(m.get('rate', 0.595)):.3f}'>"
               "<span style='opacity:.5;align-self:center;margin-right:2px'>speed</span>"
               "</div>"
+            + f"<div class=voices>{strip}</div>"
             + hist +
             f"<audio id=au preload=auto src='{base}/audio.wav'></audio>"
-            "<div class=bar><button id=prev>&#9664;</button>"
-            "<button class=play id=play>&#9654;&#65038; Play</button>"
-            "<button id=next>&#9654;</button><span id=pos>&ndash;/&ndash;</span></div>")
+            "")
     tab_title = m["session"] + (f" / {m['path']}" if m.get("path") else "")
     return page(tab_title, body, PLAYER_JS)
 
