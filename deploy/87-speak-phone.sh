@@ -207,10 +207,53 @@ def _run(cmd: list[str]) -> str:
         return ""
 
 
-def _herdr_names(session: str, ws_id: str, tab_id: str) -> tuple[str, str]:
-    """Turn herdr ids into the names a human uses, by asking herdr about THIS session."""
+def _herdr_state(session: str, ws_id: str, tab_id: str) -> tuple[str, str]:
+    """Resolve ids to names from the file herdr persists, not from its API socket.
+
+    The socket is not a dependable dependency. Detaching every client at once takes the
+    API listener down on all three long-running sessions here and it does NOT come back
+    when they are reattached -- the servers keep running, so nothing looks broken, but
+    every lookup after that returns nothing and the ids leak into the slug. A URL like
+    `NetSapiens--w1--w1-tC` is exactly that: workspace w1, tab w1:tC, unresolved.
+
+    session.json is written by the server every few seconds and survives all of it. Tab
+    ids carry the public tab number in hex -- `w1:tC` is tab 12 -- and
+    `public_tab_numbers` lists those in the same order as `tabs`.
+    """
+    if not session or "/" in session or session in (".", ".."):
+        return "", ""
+    f = HOME / ".config/herdr/sessions" / session / "session.json"
+    try:
+        d = json.loads(f.read_text())
+    except (OSError, ValueError):
+        return "", ""
+
     ws_name = tab_name = ""
-    if ws_id:
+    for w in d.get("workspaces") or []:
+        if w.get("id") != ws_id:
+            continue
+        # A workspace rarely has a name of its own; herdr labels it with its directory.
+        ws_name = w.get("custom_name") or Path(w.get("identity_cwd") or "").name
+        want = tab_id.rsplit(":t", 1)[-1].lower() if ":t" in tab_id else ""
+        for num, tb in zip(w.get("public_tab_numbers") or [], w.get("tabs") or []):
+            if isinstance(num, int) and f"{num:x}" == want:
+                tab_name = tb.get("custom_name") or ""
+                break
+        break
+    return ws_name, tab_name
+
+
+def _herdr_names(session: str, ws_id: str, tab_id: str) -> tuple[str, str]:
+    """Turn herdr ids into the names a human uses.
+
+    The persisted file answers first: it needs no running server, costs no subprocess,
+    and matches what the tab bar shows. The API is the fallback, so a change to the file
+    format degrades to a query rather than to raw ids.
+    """
+    ws_name, tab_name = _herdr_state(session, ws_id, tab_id)
+    if ws_name and tab_name:
+        return ws_name, tab_name
+    if ws_id and not ws_name:
         try:
             d = json.loads(_run(["herdr", "workspace", "list", "--session", session]) or "{}")
             for w in (d.get("result") or {}).get("workspaces", []):
@@ -219,7 +262,7 @@ def _herdr_names(session: str, ws_id: str, tab_id: str) -> tuple[str, str]:
                     break
         except ValueError:
             pass
-    if tab_id:
+    if tab_id and not tab_name:
         try:
             d = json.loads(_run(["herdr", "tab", "list", "--session", session]) or "{}")
             for tb in (d.get("result") or {}).get("tabs", []):
