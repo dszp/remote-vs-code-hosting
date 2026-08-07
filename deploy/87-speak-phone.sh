@@ -795,8 +795,12 @@ ol.opts li::before{content:counter(o);flex:0 0 1.4em;height:1.4em;line-height:1.
      font-variant-numeric:tabular-nums}
 /* Mirrors #pos on the other end. When the bar is pinned this is the only way back that
    is always on screen -- the other two scroll away with the text. */
-.allmini{font-size:.82rem;font-weight:600;opacity:.72;min-width:3.4em;text-align:left;
-         color:inherit;text-decoration:none;padding:8px 2px;white-space:nowrap}
+/* Same chrome as the prev/next buttons, so it reads as touchable rather than as a label
+   that happens to be tappable. Narrower padding keeps Play the widest thing in the bar. */
+.allmini{display:flex;align-items:center;justify-content:center;
+         padding:13px 12px;border-radius:11px;background:rgba(127,127,127,.26);
+         font-size:.82rem;font-weight:600;color:inherit;text-decoration:none;
+         white-space:nowrap}
 """
 
 PLAYER_JS = """
