@@ -514,6 +514,9 @@ is "the checkbox appears twice" \
    "$(printf '%s' "$HPAGE" | grep -o "class='heard" | wc -l | tr -d ' ')" "2"
 is "a back link sits beside each heard row" \
    "$(printf '%s' "$HPAGE" | grep -o "class=back" | wc -l | tr -d ' ')" "2"
+# A third way back, inside the transport bar. When that bar is pinned on a phone it is the
+# only one always on screen; the other two scroll away with the text.
+like "the transport bar has its own way back" "$HPAGE" "class=allmini"
 
 # Auto-mark on finishing, but a deliberate choice outranks it PERMANENTLY: unchecking
 # something you have already heard means "come back to it", and re-marking erases that.
