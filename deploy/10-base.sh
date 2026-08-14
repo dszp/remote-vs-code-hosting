@@ -11,34 +11,59 @@ echo ">> packages (EPEL for mosh; tmux/git/curl/tar)"
 dnf install -y epel-release
 dnf install -y tmux git curl tar mosh
 
-echo ">> swap: ensure a swapfile exists (memory safety net, sized to RAM by default)"
+echo ">> swap: ensure swap MEETS POLICY (memory safety net, sized to RAM by default)"
 # The VM ships with no swap, so a memory spike (e.g. several concurrent Claude Code sessions)
 # has no cushion: the kernel OOM-killer culls processes — including the user systemd + tmux
 # server — and every session dies (this happened 2026-07-12). A swapfile lets the box page
 # and slow down instead of killing. Size = $SWAP_GB GiB; default "auto" = round(RAM) up to a
-# whole GiB. SWAP_GB=0 skips. Idempotent: leaves any existing swap untouched. xfs rejects a
-# fallocate'd swapfile ("swapfile has holes" — unwritten extents), so the file is written with
-# dd. Paired with deploy/95-swap-monitor.sh, which alerts before swap fills.
+# whole GiB. SWAP_GB=0 skips. xfs rejects a fallocate'd swapfile ("swapfile has holes" —
+# unwritten extents), so files are written with dd. Paired with deploy/95-swap-monitor.sh,
+# which alerts before swap fills.
+#
+# This step used to stop at "swap exists", which meant a RAM increase silently left swap
+# UNDER policy with nothing to say so — 16 GiB against a 24 GiB rule after the 2026-08-11
+# bump. It now TOPS UP with an additional file sized to the shortfall. Existing swap is
+# still never touched: swapoff pages everything back into RAM, the exact opposite of what a
+# box under pressure needs, so a top-up file is the safe way to grow.
 SWAP_GB="${SWAP_GB:-auto}"
-if [ "$(swapon --show=NAME --noheadings 2>/dev/null | wc -l)" -gt 0 ]; then
-  echo "   swap already active — leaving it as-is: $(swapon --show --noheadings | tr '\n' ' ')"
-elif [ "$SWAP_GB" = "0" ]; then
+if [ "$SWAP_GB" = "0" ]; then
   echo "   SWAP_GB=0 — skipping swap provisioning"
 else
   if [ "$SWAP_GB" = "auto" ]; then
     # rvc_swap_policy_gib (lib.sh) is the single definition of this rule; the swap
     # monitor (deploy/95) embeds the same function so the two cannot drift.
     SWAP_GB="$(rvc_swap_policy_gib)"
-    [ "$SWAP_GB" -gt 0 ] 2>/dev/null || { echo "!! cannot read MemTotal — skipping swap" >&2; SWAP_GB=0; }
   fi
-  echo "   creating /swapfile (${SWAP_GB} GiB, dd for xfs-safety)"
-  dd if=/dev/zero of=/swapfile bs=1M count="$(( SWAP_GB * 1024 ))" status=none
-  chmod 600 /swapfile
-  restorecon /swapfile 2>/dev/null || true          # SELinux label (no-op if not enforcing)
-  mkswap /swapfile >/dev/null
-  swapon /swapfile
-  grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-  echo "   swap on: $(swapon --show --noheadings | tr '\n' ' ')"
+  have_gb="$(rvc_swap_total_gib)"
+  if ! [ "${SWAP_GB:-0}" -gt 0 ] 2>/dev/null; then
+    echo "!! cannot read MemTotal — skipping swap" >&2
+  elif [ "${have_gb:-0}" -ge "$SWAP_GB" ] 2>/dev/null; then
+    echo "   swap meets policy (${have_gb}G >= ${SWAP_GB}G): $(swapon --show --noheadings | tr '\n' ' ')"
+  else
+    add_gb=$(( SWAP_GB - have_gb ))
+    # Never fill / to provision swap: a full root breaks far more than short swap does.
+    # Keep 5 GiB clear after the write.
+    avail_gb="$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')"
+    if [ "${avail_gb:-0}" -lt $(( add_gb + 5 )) ] 2>/dev/null; then
+      echo "!! want ${add_gb}G more swap but only ${avail_gb:-?}G free on / — skipping (free space, or set SWAP_GB)" >&2
+    else
+      # First file is /swapfile; top-ups take the next free /swapfileN so the existing one
+      # is never rewritten. Once a top-up is active, have_gb >= policy and this is a no-op.
+      if [ "${have_gb:-0}" -eq 0 ]; then
+        f=/swapfile
+      else
+        n=2; while [ -e "/swapfile$n" ]; do n=$(( n + 1 )); done; f="/swapfile$n"
+      fi
+      echo "   creating $f (${add_gb} GiB, dd for xfs-safety) to reach the ${SWAP_GB}G policy"
+      dd if=/dev/zero of="$f" bs=1M count="$(( add_gb * 1024 ))" status=none
+      chmod 600 "$f"
+      restorecon "$f" 2>/dev/null || true          # SELinux label (no-op if not enforcing)
+      mkswap "$f" >/dev/null
+      swapon "$f"
+      grep -q "^$f " /etc/fstab || echo "$f none swap sw 0 0" >> /etc/fstab
+      echo "   swap on: $(swapon --show --noheadings | tr '\n' ' ')"
+    fi
+  fi
 fi
 
 echo ">> inotify: raise the file-watcher limits (VS Code Remote-SSH ENOSPC)"
