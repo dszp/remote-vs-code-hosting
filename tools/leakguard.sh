@@ -66,7 +66,8 @@ scan_builtin() {
     report "$f" "$no" "email address" "${line#*:}"
   done < <(staged_content "$f" \
       | grep -nE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
-      | grep -vE 'users\.noreply\.github\.com|@example\.(com|org)|@[A-Za-z0-9.-]*\.invalid' || true)
+      | grep -vE 'users\.noreply\.github\.com|@example\.(com|org)|@[A-Za-z0-9.-]*\.invalid|^[0-9]+:git@' \
+      | grep -vE '(^|[^A-Za-z0-9._%+-])git@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' || true)
 }
 
 scan_patterns() {
