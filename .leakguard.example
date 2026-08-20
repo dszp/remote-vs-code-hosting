@@ -1,0 +1,24 @@
+# leakguard patterns — one case-insensitive literal per line, # for comments.
+#
+# THIS FILE IS AN EXAMPLE AND IS COMMITTED. Your real list is copied to
+# .git/leakguard-patterns, which lives inside .git and is therefore never
+# pushed — a denylist of secret names committed to a public repo publishes
+# exactly what it is meant to protect.
+#
+# Put here the things that must never reach a public commit:
+#
+# Client names and abbreviations
+# AcmeCorp
+# ACME
+#
+# Private repo and project names
+# my-private-tool
+# internal-dashboard
+#
+# Internal hosts, orgs and domains
+# vpn.internal.example
+# my-github-org
+#
+# Built-in checks need no configuration: absolute /home/<user> and /Users/<user>
+# paths, email addresses (github noreply and example.com excepted), and private
+# key headers.
