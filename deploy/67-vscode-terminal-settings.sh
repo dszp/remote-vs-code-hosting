@@ -28,7 +28,7 @@
 # verify against the process table.
 #
 # NO PANEL ON STARTUP: `terminal.integrated.hideOnStartup: always`. Note this does NOT
-# govern an extension force-revealing its own Output channel — some-extension does that on
+# govern an extension force-revealing its own Output channel — some extensions do that on
 # every activation when it can't reach n8n on 127.0.0.1:5678, and no setting suppresses
 # it (it contributes only n8n.agent.* / n8n.tls.*). Disable that extension for the
 # workspace, or give it an n8n to talk to.
@@ -150,7 +150,7 @@ WATCH_KEY = "files.watcherExclude"
 WANT_TOP = {
     "terminal.integrated.persistentSessionReviveProcess": "never",
     # Don't open the panel on window open/reload. Note this does NOT stop an
-    # extension force-revealing its own Output channel (some-extension does exactly
+    # extension force-revealing its own Output channel (some extensions do exactly
     # that when it can't reach n8n) — no setting governs that; disable the
     # extension for the workspace instead.
     "terminal.integrated.hideOnStartup": "always",

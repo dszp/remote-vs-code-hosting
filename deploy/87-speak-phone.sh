@@ -214,7 +214,7 @@ def _herdr_state(session: str, ws_id: str, tab_id: str) -> tuple[str, str]:
     API listener down on all three long-running sessions here and it does NOT come back
     when they are reattached -- the servers keep running, so nothing looks broken, but
     every lookup after that returns nothing and the ids leak into the slug. A URL like
-    `NetSapiens--w1--w1-tC` is exactly that: workspace w1, tab w1:tC, unresolved.
+    `MyGroup--w1--w1-tC` is exactly that: workspace w1, tab w1:tC, unresolved.
 
     session.json is written by the server every few seconds and survives all of it. Tab
     ids carry the public tab number in hex -- `w1:tC` is tab 12 -- and

@@ -109,8 +109,8 @@ if [ ! -f "$CONF" ]; then
 #
 # source     absolute, or relative to ~/workspace. A directory OR a single file.
 # vault-path relative to the vault root; defaults to <source>. Use it to flatten
-#            a deep path — `my-project/docs/superpowers  my-project` publishes as
-#            plans/my-project/{plans,specs} instead of four levels of nesting.
+#            a deep path — `my-project/docs/superpowers  my-project` publishes
+#            as plans/my-project/{plans,specs} rather than four levels of nesting.
 #
 # Blank lines and #-comments ignored. Split on the FIRST whitespace run, so a
 # vault-path MAY contain spaces ("REPORTS/Monthly Invoice Review"); a source may not.
@@ -124,16 +124,12 @@ if [ ! -f "$CONF" ]; then
 #     Their design docs are upstream's, not yours.
 # `pvault add` warns about both rather than refusing — override if you mean it.
 
-ANSIBLE/ansible-playbooks/docs/superpowers          ansible-playbooks
-project-validations/docs/superpowers                      project-validations
-reports-group/client-a/docs/superpowers                       reports-group/client-a
-reports-group/workflow-rules/docs/superpowers               reports-group/workflow-rules
-n8n/some-extension/docs/superpowers                           some-extension
-NetSapiens/onboarding-tool/docs/superpowers   NetSapiens/Onboarding-Backup
-NetSapiens/web-console/docs/superpowers                  NetSapiens/web-console
-my-project/docs/superpowers                                 my-project
-Remote-VS-Code/remote-vs-code/docs/superpowers             Remote-VS-Code
-linux-notes/docs/superpowers                        linux-notes
+# Nothing is published until you add something. Examples — uncomment and edit,
+# or just run `pvault add <src> [dest]`, which appends here and mounts it.
+#
+# my-project/docs/superpowers            my-project
+# group/other-project/docs/superpowers   group/other-project
+# notes/reports                          REPORTS
 CONF
   echo "created $CONF"
 else
@@ -406,7 +402,7 @@ cmd_apply() {
   # Re-pointing an entry leaves the server holding notes at the OLD vault paths.
   # pvault-sync's normal order is pull-then-push, so the pull would RESURRECT those
   # orphans — writing them back through the new bind mount into the repo itself
-  # (my-project gained empty docs/plans/ and docs/specs/ trees this way), which then
+  # (a repo gained empty docs/plans/ and docs/specs/ trees this way), which then
   # push back up, and every cycle mints fresh guids that invalidate the permalinks
   # in the frontmatter. A push here sees the old paths as locally absent and deletes
   # them server-side, which is the correct reading: the config no longer publishes them.

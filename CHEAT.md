@@ -51,13 +51,13 @@ symlinks outright, so a symlink farm would sync nothing.
   ```yaml
   ---
   source_path: ~/workspace/<repo>/docs/superpowers/specs/<file>.md
-  workspace: NetSapiens          # _rvc_ws_name — the project root / herdr session name
-  repo: web-console            # bare repo name (from origin, else the directory)
-  repo_url: https://github.com/__GIT_ORG__/web-console   # omit when there is no remote
+  workspace: MyGroup             # _rvc_ws_name — the project root / herdr session name
+  repo: my-project               # bare repo name (from origin, else the directory)
+  repo_url: https://github.com/__GIT_ORG__/my-project   # omit when there is no remote
   permalink: https://realtime.__BASE_DOMAIN__/n/<guid>
   ---
   ```
-  79 files across the published projects are backfilled; write new ones the same way.
+  Existing plans/specs are backfilled; write new ones the same way.
   `permalink` survives content edits — the guid is keyed to the note's path. Folders bound
   wholesale (reports, not plans) are not stamped.
 - Config: `~/.config/remote-vs-code/plans-vault.conf` (`<source> [<vault-path>]`; source is

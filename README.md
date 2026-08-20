@@ -488,6 +488,7 @@ Fill these in (all live in `env.example`; some also appear in `config/ssh-config
 | `__VM_SSH_ALIAS__` | Silent Remote-SSH host alias (dedicated no-TouchID key, `VM_ALIAS_HOST`) | `dev-auto` |
 | `__DEV_USER__` | Login user on the VM | `dev` |
 | `__MAC_USER__` | Your macOS username (op resolver paths/label) | `alex` |
+| `__GIT_ORG__` | Your git host org/user, so your own repos are not flagged third-party | `acme` |
 | `__PVE_HOST__` | Proxmox host (SSH target for VM creation) | `pve` |
 | `__PVE_TS_IP__` | Proxmox host's Tailscale IP (for `SSH_JUMP`) | `100.x.y.z` |
 | `__VM_LAN_IP__` | VM's LAN IP (pre-Tailscale, for `SSH_JUMP`) | `192.168.1.50` |

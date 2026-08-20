@@ -190,7 +190,7 @@ rvc_ensure_inotify_limits() {
   cat > "$conf" <<EOF
 # Raise inotify limits so VS Code Remote-SSH file watchers don't hit ENOSPC.
 # 8192 default is too small for a workspace with node_modules/.git + multiple
-# reconnecting Remote-SSH windows + extensions (some-extension, Pylance).
+# reconnecting Remote-SSH windows + extensions (Pylance and friends).
 # Managed by remote-vs-code deploy/10-base.sh — it never overwrites this file.
 fs.inotify.max_user_watches=$want_watches
 fs.inotify.max_user_instances=$want_instances
