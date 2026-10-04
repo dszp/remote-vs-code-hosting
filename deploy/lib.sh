@@ -47,14 +47,21 @@ ensure_line() {
 #
 # MEMINFO is overridable so both are testable (tests/test-swap-policy.sh).
 
-# Wanted swap, in whole GiB, from RAM.
+# Wanted swap, in whole GiB: RAM size, capped at RVC_SWAP_MAX_GIB (default 16).
+# The cap exists because deploy/96 limits the user slice's swap to 38% of RAM, so swap past
+# that is reachable only by system services. On a 24 GiB __VM_NAME__ the slice cap is 9 GiB and
+# a full week of 22 Claude sessions peaked at 8.7 GiB used; the 8 GiB top-up file that a
+# 1:1 rule demanded never held a page while / filled to 100% (2026-10-04).
 rvc_swap_policy_gib() {
-  local kib
+  local kib want max="${RVC_SWAP_MAX_GIB:-16}"
   kib="$(awk '/^MemTotal:/{print $2}' "${MEMINFO:-/proc/meminfo}" 2>/dev/null)"
   # A wrong number here would provision an absurd swapfile or nag about a phantom
   # shortfall, so refuse to guess.
   case "$kib" in ''|*[!0-9]*) printf '0'; return 1 ;; esac
-  printf '%s' $(( (kib + 1048575) / 1048576 ))
+  case "$max" in ''|*[!0-9]*|0) max=16 ;; esac
+  want=$(( (kib + 1048575) / 1048576 ))
+  [ "$want" -gt "$max" ] && want="$max"
+  printf '%s' "$want"
 }
 
 # Swap the box actually has, in whole GiB, rounded UP.

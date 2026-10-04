@@ -270,7 +270,7 @@ have); no cloud, no token, works with the laptop asleep.
   binary up first — the update is in-place; rollback is `moshi-hook update --version v<old>`.
 
 ## Memory / swap
-- The VM has a **swapfile** (`/swapfile`, sized to RAM) so a memory spike pages instead of
+- The VM has a **swapfile** (`/swapfile`, sized to RAM, capped at 16 GiB) so a memory spike pages instead of
   OOM-killing every session — `10-base.sh` provisions it; `swap-notify.timer` warns before it fills.
 - Status: `swapon --show` · `free -h` · `systemctl status swap-notify.timer`.
 - The alert fires at **≥50%** swap used, via the same bridge as Claude (Mac desktop when connected,

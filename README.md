@@ -70,7 +70,7 @@ they're marked **[manual]**.
    ./deploy/run-remote.sh __DEV_USER__@<vm-ip> deploy/10-base.sh DEV_USER=__DEV_USER__
    ```
    ⚠ It sets key-only SSH auth — keep this session open and verify a **new** SSH session works before closing it.
-   It also provisions a **swapfile** sized to RAM (`SWAP_GB=<n>` to override, `SWAP_GB=0` to skip; idempotent —
+   It also provisions a **swapfile** sized to RAM, capped at 16 GiB (`SWAP_GB=<n>` to override, `SWAP_GB=0` to skip; idempotent —
    leaves existing swap alone). The VM has no swap out of the box, and without it a memory spike (several
    concurrent Claude sessions) OOM-kills the tmux server and every session. Paired with the high-swap alert (**G**).
 
@@ -297,7 +297,7 @@ should own the mouse at a time — toggle tmux's with **`Ctrl-b m`** (the status
 **G. Swap safety net + high-swap alert.** The VM ships with **no swap**; on 2026-07-12 a stack
 of concurrent Claude Code sessions exhausted RAM and the kernel OOM-killer took down the user
 `systemd` + tmux server, dropping every session. Two parts fix it: `10-base.sh` provisions a
-swapfile (sized to RAM — see step 2) so pressure **pages** instead of killing, and this step adds
+swapfile (sized to RAM, capped at 16 GiB — see step 2) so pressure **pages** instead of killing, and this step adds
 an **early-warning alert** so you can shed load before swap fills. Reuses the **B** notify bridge —
 Mac desktop notification when connected, push (Pushover/ntfy) when offline.
 ```bash

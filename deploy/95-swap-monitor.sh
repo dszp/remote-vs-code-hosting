@@ -11,9 +11,10 @@
 #   ./deploy/run-remote.sh __VM_NAME__ deploy/95-swap-monitor.sh DEV_USER=__DEV_USER__
 #
 # 2026-08-11: swap% ALONE PROVED BLIND. deploy/96 caps the user slice's memory.swap.max at
-# 38% of RAM while rvc_swap_policy_gib sizes the swapfile at 100% of RAM, so the slice
-# saturates its ENTIRE budget at ~38% global — below the 50% line at any RAM size, so the
-# rule could never fire. The box ran 3.5 days of accumulated Claude sessions to load 247 with
+# 38% of RAM while rvc_swap_policy_gib then sized the swapfile at 100% of RAM, so the slice
+# saturated its ENTIRE budget at ~38% global — below the 50% line at any RAM size, so the
+# rule could never fire. (Swap is now capped at 16 GiB, which lifts that ratio above 16 GiB
+# of RAM — 9/16 = 56% on 24 GiB — but the slice rule is still the one that sees saturation.) The box ran 3.5 days of accumulated Claude sessions to load 247 with
 # available memory at 9.8% and this alert stayed silent throughout. Two rules were added: the
 # slice's own swap budget (percent OF THE CAP) and MemAvailable, the leading indicator.
 # PSI (/proc/pressure/memory) would be the ideal signal and is NOT compiled in on this kernel.
@@ -115,8 +116,8 @@ fi
 
 # --- rule 2: this user slice's own swap budget (the one that actually ran out) --------------
 # Global swap% CANNOT see this. deploy/96 caps the slice at 38% of RAM while
-# rvc_swap_policy_gib sizes the swapfile at 100% of RAM, so the slice saturates its entire
-# budget at ~38% global — permanently below HIGH_PCT, at any RAM size. On 2026-08-11 it sat
+# rvc_swap_policy_gib sizes the swapfile at RAM size (capped at 16 GiB), so up to 16 GiB of
+# RAM the slice saturates its entire budget at ~38% global — permanently below HIGH_PCT. On 2026-08-11 it sat
 # pinned at exactly 6.0 GiB of a 6.0 GiB cap while the global gauge read 37% and stayed
 # silent. Saturation here is the thing that hurts: with no swap budget left the kernel
 # reclaims PAGE CACHE instead, so every file read refaults from disk — that is what pinned

@@ -24,7 +24,11 @@ is "15 GiB box wants 16G"        "$(MEMINFO=$(meminfo 16269832) rvc_swap_policy_
 is "exactly 8 GiB wants 8G"      "$(MEMINFO=$(meminfo 8388608)  rvc_swap_policy_gib)" "8"
 is "one KiB over 8 GiB wants 9G" "$(MEMINFO=$(meminfo 8388609)  rvc_swap_policy_gib)" "9"
 is "a tiny box still wants 1G"   "$(MEMINFO=$(meminfo 1)        rvc_swap_policy_gib)" "1"
-is "32 GiB box wants 32G"        "$(MEMINFO=$(meminfo 33554432) rvc_swap_policy_gib)" "32"
+is "16 GiB box wants 16G"        "$(MEMINFO=$(meminfo 16777216) rvc_swap_policy_gib)" "16"
+is "24 GiB box is capped at 16G" "$(MEMINFO=$(meminfo 25027452) rvc_swap_policy_gib)" "16"
+is "32 GiB box is capped at 16G" "$(MEMINFO=$(meminfo 33554432) rvc_swap_policy_gib)" "16"
+is "cap is overridable"          "$(RVC_SWAP_MAX_GIB=32 MEMINFO=$(meminfo 33554432) rvc_swap_policy_gib)" "32"
+is "a junk cap falls back to 16" "$(RVC_SWAP_MAX_GIB=abc MEMINFO=$(meminfo 33554432) rvc_swap_policy_gib)" "16"
 
 # Refuse to guess when MemTotal is unreadable — a wrong number here would either
 # provision an absurd swapfile or nag forever about a phantom shortfall.
