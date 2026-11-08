@@ -52,6 +52,8 @@ PLIST
 # while it is still there fails with "Bootstrap failed: 5: Input/output error". Wait it out.
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 for _ in $(seq 1 20); do launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 || break; sleep 0.5; done
+# With the old job gone its socket file is stale; remove it so the wait below sees the new one.
+rm -f "$LISTEN"
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -S "$LISTEN" ] && break; sleep 0.5; done
