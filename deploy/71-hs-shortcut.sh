@@ -981,6 +981,13 @@ def cmd_open(name: str, cwd: str, wsname: str | None = None) -> None:
     attach(rec, target or "t?")
 
 
+def start_dir(cwd: str) -> str:
+    """Where a new session starts when nothing better was given. From $HOME that is
+    the workspace folder, the same place the login shell's auto-cd goes."""
+    ws = Path(os.environ.get("WORKSPACE_DIR") or HOME / "workspace")
+    return str(ws) if Path(cwd) == HOME and ws.is_dir() else cwd
+
+
 def new_workspace(path: str) -> dict:
     p = str(Path(path).resolve())
     name = Path(p).name or "home"
@@ -996,7 +1003,7 @@ def open_session(name: str, cwd: str, wsname: str | None = None):
         if rec is None:
             if name == "default":
                 die("'default' is hc's own core; pick another session name")
-            first = wsname if wsname and Path(cwd, wsname).is_dir() else cwd
+            first = wsname if wsname and Path(cwd, wsname).is_dir() else start_dir(cwd)
             rec = {"name": name, "core": name, "stopped": False,
                    "workspaces": [new_workspace(str(Path(cwd, first)))]}
             wsname = None

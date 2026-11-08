@@ -177,7 +177,7 @@ tabs you add or rename in Moshi are kept in the session.
 - `hsc r [name]` — restart: stop and reopen, so every Claude tab resumes on the current Claude Code (after an update). Works from inside the session too.
 - `hsc x [name]` — stop it. Run inside the session (`! hsc x` in Claude) to stop it and drop back to the shell you attached from.
 - `hsc <name> <workspace>` — reopen a workspace you closed in Moshi. Its Claude tabs resume.
-- `hsc <name> <dir>` — add a workspace in that folder to the session.
+- `hsc <name> <dir>` — add a workspace in that folder to the session. A new session started from `~` begins in `~/workspace`.
 - `hsc mv <src> <dest> [workspace]` — move a session's workspaces, or one of them, into another session. Running ones end and resume in `<dest>`; `<src>` is deleted once empty.
 - `hsc rm <name> <workspace>` — delete one closed workspace from a session for good.
 - `hsc ls` / `rm` / `k` — same as `hs`. A bare verb opens the fzf picker.

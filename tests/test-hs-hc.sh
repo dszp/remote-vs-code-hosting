@@ -357,4 +357,10 @@ like "boot resumes claude in a kept tab" "$out" "1 kept tab resumed"
 like "kept tab runs the resume" "$(cat "$HS_FAKESH_LOG")" "claude --resume sid-kept"
 hsc x kept >/dev/null
 
+# --- from $HOME, a new session starts in ~/workspace ---
+mkdir -p "$HOME/workspace"
+out="$( (cd "$HOME" && bash "$HSABS" -c fromhome) 2>&1 )"
+is "new session from home starts in ~/workspace" "$(rec fromhome 'r["workspaces"][0]["cwd"]')" "$HOME/workspace"
+hsc x fromhome >/dev/null; hsc rm fromhome >/dev/null
+
 finish
