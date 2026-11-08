@@ -59,9 +59,21 @@ func TestListShowsOnlyAllowedKey(t *testing.T) {
 	}
 }
 
+// sshsig builds the blob `ssh-keygen -Y sign -n <ns>` hands the agent.
+func sshsig(ns string) []byte {
+	str := func(b []byte) []byte {
+		return append([]byte{byte(len(b) >> 24), byte(len(b) >> 16), byte(len(b) >> 8), byte(len(b))}, b...)
+	}
+	out := []byte("SSHSIG")
+	out = append(out, str([]byte(ns))...)
+	out = append(out, str(nil)...)
+	out = append(out, str([]byte("sha512"))...)
+	return append(out, str(make([]byte, 64))...)
+}
+
 func TestSignWithAllowedKeyVerifies(t *testing.T) {
 	c, allowed, _ := setup(t)
-	data := []byte("tag object")
+	data := sshsig("git")
 	sig, err := c.Sign(allowed, data)
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +83,27 @@ func TestSignWithAllowedKeyVerifies(t *testing.T) {
 	}
 	if _, err := c.SignWithFlags(allowed, data, 0); err != nil {
 		t.Fatalf("SignWithFlags with allowed key: %v", err)
+	}
+}
+
+func TestSignRefusesAnythingButAGitSignature(t *testing.T) {
+	c, allowed, _ := setup(t)
+	// An SSH login challenge: string session_id, byte 50, ... — never SSHSIG.
+	login := append([]byte{0, 0, 0, 32}, make([]byte, 32)...)
+	login = append(login, 50)
+	for name, data := range map[string][]byte{
+		"login challenge": login,
+		"file namespace":  sshsig("file"),
+		"truncated":       []byte("SSHSIG\x00\x00"),
+		"length overflow": append([]byte("SSHSIG"), 0xff, 0xff, 0xff, 0xff, 'g', 'i', 't'),
+		"plain bytes":     []byte("tag object"),
+	} {
+		if _, err := c.Sign(allowed, data); err == nil {
+			t.Errorf("Sign accepted %s", name)
+		}
+		if _, err := c.SignWithFlags(allowed, data, 0); err == nil {
+			t.Errorf("SignWithFlags accepted %s", name)
+		}
 	}
 }
 

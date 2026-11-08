@@ -8,8 +8,10 @@
 // through:
 //
 //   - List returns only the allowed key.
-//   - Sign / SignWithFlags reach 1Password only for the allowed key, and 1Password still
-//     shows its own approval prompt for each one.
+//   - Sign / SignWithFlags reach 1Password only for the allowed key, only for a git
+//     signature (an SSHSIG blob in the "git" namespace), and 1Password still shows its
+//     own approval prompt for each one. A request to sign anything else, such as an SSH
+//     login challenge, is refused, so the VM cannot use the key to log in anywhere.
 //   - Add, Remove, RemoveAll, Lock, Unlock, Signers and extensions are refused.
 //
 // Each client connection dials the upstream socket fresh, so a 1Password restart doesn't
@@ -18,6 +20,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -69,9 +73,26 @@ func (f *filter) List() ([]*agent.Key, error) {
 	return kept, nil
 }
 
+// gitSignature reports whether data is what `ssh-keygen -Y sign -n git` asks an
+// agent to sign: the literal preamble "SSHSIG", then the namespace as an SSH string.
+// An SSH login challenge starts with a length-prefixed session ID instead, so it can
+// never pass.
+func gitSignature(data []byte) bool {
+	const magic = "SSHSIG"
+	if !bytes.HasPrefix(data, []byte(magic)) || len(data) < len(magic)+4 {
+		return false
+	}
+	rest := data[len(magic):]
+	n := binary.BigEndian.Uint32(rest)
+	return uint64(n) <= uint64(len(rest)-4) && string(rest[4:4+n]) == "git"
+}
+
 func (f *filter) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 	if !f.allowed(key) {
 		return nil, f.refuse("sign", key)
+	}
+	if !gitSignature(data) {
+		return nil, f.refuse("sign (not a git signature)", key)
 	}
 	return f.upstream.Sign(key, data)
 }
@@ -79,6 +100,9 @@ func (f *filter) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
 func (f *filter) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
 	if !f.allowed(key) {
 		return nil, f.refuse("sign", key)
+	}
+	if !gitSignature(data) {
+		return nil, f.refuse("sign (not a git signature)", key)
 	}
 	return f.upstream.SignWithFlags(key, data, flags)
 }

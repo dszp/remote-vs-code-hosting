@@ -97,14 +97,17 @@ def emit(spaces: list[dict], machine: str, start: bool) -> None:
     print("set -euo pipefail")
     print("space_id() { jq -r '.space // empty'; }   # UNVERIFIED key; see the script's notes")
     for s in spaces:
-        print(f"\n# --- {s['name']}  (herdr session {s['session']}, {len(s['tabs'])} tabs)")
+        # Names come from herdr's session files. Keep them to one comment line, and
+        # quote them where the shell reads them, so a name can never run as code.
+        flat = lambda v: " ".join(str(v).split())
+        print(f"\n# --- {flat(s['name'])}  (herdr session {flat(s['session'])}, {len(s['tabs'])} tabs)")
         first, rest = s["tabs"][0], s["tabs"][1:]
         args = {"name": s["name"], "machine": machine, "folder": first["folder"],
                 "tab": first["name"]}
         if (a := argv_for(first, start)):
             args["argv"] = a
         print(f"sp=$(herdr-app do space.new {q(args)} | space_id)")
-        print(f'[ -n "$sp" ] || {{ echo "no space id for {s["name"]}" >&2; exit 1; }}')
+        print(f'[ -n "$sp" ] || {{ echo "no space id for "{shlex.quote(s["name"])} >&2; exit 1; }}')
         for t in rest:
             targs = {"space": "__SP__", "name": t["name"], "folder": t["folder"]}
             if (a := argv_for(t, start)):
