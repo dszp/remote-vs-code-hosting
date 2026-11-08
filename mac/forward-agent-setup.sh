@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Always-on carrier for the op resolver + notify bridge. Run ON YOUR MAC.
+# Always-on carrier for the op resolver, notify bridge and 1Password SSH agent. Run ON YOUR MAC.
 #
 # The op proxy (mac mode) and the notify bridge only work while a LIVE Mac->VM SSH
 # connection is holding their RemoteForward'd sockets open. A VS Code Remote-SSH window
@@ -18,6 +18,12 @@
 #   ./mac/forward-agent-setup.sh
 # Override defaults via env: FWD_HOST, SSH_HOST, KEY_PATH, DEV_USER.
 #
+# It also forwards a signing agent to ~/.ssh/mac-1p-agent.sock on the VM, for git signing
+# (deploy/88-git-ssh-signing.sh). The socket is NOT 1Password's own agent but the filter in
+# front of it (mac/1p-sign-filter-setup.sh), which exposes only the signing key: the VM asks
+# it to sign, 1Password shows a TouchID prompt naming the key, and only the signature comes
+# back — the private key never leaves the Mac, and the other 1Password keys aren't reachable.
+#
 # Prereqs: mac/vm-alias-key-setup.sh (the silent key this reuses), mac/op-resolver-setup.sh,
 # and mac/notify-bridge-setup.sh (the Mac-side sockets this forwards to).
 set -euo pipefail
@@ -26,11 +32,13 @@ FWD_HOST="${FWD_HOST:-__VM_NAME__-fwd}"     # the new forward-only alias this ag
 SSH_HOST="${SSH_HOST:-__VM_NAME__}"         # existing Host used only to derive the VM's HostName
 KEY_PATH="${KEY_PATH:-$HOME/.ssh/__VM_SSH_ALIAS___ed25519}"   # silent key from vm-alias-key-setup.sh
 DEV_USER="${DEV_USER:-__DEV_USER__}"            # login user on the VM (its socket paths)
+SIGN_AGENT="${SIGN_AGENT:-$HOME/.1password-filter/sign.sock}"   # mac/1p-sign-filter-setup.sh
 LABEL="com.__MAC_USER__.__VM_NAME__-forward"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$HOME/Library/Logs/$LABEL.log"
 
 [ -f "$KEY_PATH" ] || { echo "!! $KEY_PATH missing — run mac/vm-alias-key-setup.sh first"; exit 1; }
+[ -S "$SIGN_AGENT" ] || echo "!! $SIGN_AGENT not found — run mac/1p-sign-filter-setup.sh first (git signing on the VM needs it)"
 
 # Derive the VM's real HostName from the existing Host so we don't hardcode an IP.
 VM_HOSTNAME="$(ssh -G "$SSH_HOST" 2>/dev/null | awk '/^hostname /{print $2; exit}')"
@@ -77,11 +85,13 @@ cat <<EOF
     ExitOnForwardFailure yes
     RemoteForward /home/$DEV_USER/.op-proxy/mac-%n.sock $HOME/.op-resolver/resolver.sock
     RemoteForward /home/$DEV_USER/.notify/mac-%n.sock $HOME/.notify/notify.sock
+    RemoteForward /home/$DEV_USER/.ssh/mac-1p-agent.sock $SIGN_AGENT
     StreamLocalBindUnlink yes
 
    The agent is already running and retries every 30s (ThrottleInterval), so it connects
    as soon as the block is in place (KeepAlive rides out the gap). Verify:
       launchctl list | grep $LABEL          # column 1 = pid (running), column 2 = last exit
       op-mode status                          # on the VM: 'mac sockets' >= 1 with the Mac online
+      SSH_AUTH_SOCK=~/.ssh/mac-1p-agent.sock ssh-add -l   # on the VM: exactly ONE key (the signing key)
    Tear down:  launchctl bootout gui/\$(id -u)/$LABEL && rm $PLIST
 EOF

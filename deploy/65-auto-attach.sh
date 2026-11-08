@@ -163,9 +163,12 @@ cat >> "$RC" <<'RC'
 #   - VS Code terminals: VS Code chose the folder, and $PWD is what names the herdr
 #     session below, so moving it would rename the session out from under you.
 #   - tmux / herdr panes: they restore their own cwd (and are not login shells).
+#   - hc terminals: hsc starts each tab in its folder, and a Claude tab drops to a
+#     LOGIN shell when Claude exits, so a tab whose folder is $HOME would be moved.
 #   - anything non-interactive: scp/rsync/`ssh host cmd` never reach this.
 # Opt out for one shell: NO_AUTO_CD=1.
-if [[ $- == *i* && -z "$TMUX" && -z "${HERDR_ENV:-}" && -z "${NO_AUTO_CD:-}" \
+if [[ $- == *i* && -z "$TMUX" && -z "${HERDR_ENV:-}" && -z "${HC_TERMINAL_ID:-}" \
+      && -z "${NO_AUTO_CD:-}" \
       && "${TERM_PROGRAM:-}" != "vscode" && "$PWD" == "$HOME" ]] \
    && shopt -q login_shell; then
   cd "${WORKSPACE_DIR:-$HOME/workspace}" 2>/dev/null || true
@@ -370,7 +373,7 @@ complete -W "tmux herdr use status" mux
 _hs_complete() {
   local cur="${COMP_WORDS[COMP_CWORD]}" prev="" json names verbs
   [ "$COMP_CWORD" -gt 1 ] && prev="${COMP_WORDS[COMP_CWORD-1]}"
-  verbs="s switch attach x stop k kill rm delete ls list -n -h"
+  verbs="s switch attach x stop k kill rm delete ls list -n -h --copy -c"
   json="$(herdr session list --json 2>/dev/null)" || json=""
   if [ -n "$json" ]; then
     # `hs rm` only accepts a stopped session, so offer only those.
@@ -395,6 +398,24 @@ print("\n".join(s.get("name","") for s in d.get("sessions",[])))' 2>/dev/null)" 
     $(compgen -W "$names" -- "$cur") \
     $(compgen -W "$verbs" -- "$cur") | awk 'NF && !seen[$0]++')
 }
+# `hsc` (hs on hc): its session names are the backend's record files, read
+# directly so Tab never waits on the hc core.
+_hsc_complete() {
+  local cur="${COMP_WORDS[COMP_CWORD]}" prev="" names="" verbs f
+  [ "$COMP_CWORD" -gt 1 ] && prev="${COMP_WORDS[COMP_CWORD-1]}"
+  verbs="s switch attach x stop r restart mv k kill rm delete ls list -n -h --copy"
+  for f in "${HS_HC_STATE:-$HOME/.local/state/hs/hc}"/*.json; do
+    [ -e "$f" ] && { f="${f##*/}"; names="$names ${f%.json}"; }
+  done
+  case "$prev" in
+    rm|delete|s|switch|attach|x|stop|r|restart|mv|k|kill|--copy) verbs="" ;;
+  esac
+  mapfile -t COMPREPLY < <(printf '%s\n' \
+    $(compgen -d -- "$cur") \
+    $(compgen -W "$names" -- "$cur") \
+    $(compgen -W "$verbs" -- "$cur") | awk 'NF && !seen[$0]++')
+}
+complete -o filenames -F _hsc_complete hsc
 complete -o filenames -F _hs_complete hs
 # <<< remote-vs-code auto-attach mux <<<
 RC

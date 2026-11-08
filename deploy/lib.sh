@@ -49,7 +49,7 @@ ensure_line() {
 
 # Wanted swap, in whole GiB: RAM size, capped at RVC_SWAP_MAX_GIB (default 16).
 # The cap exists because deploy/96 limits the user slice's swap to 38% of RAM, so swap past
-# that is reachable only by system services. On a 24 GiB __VM_NAME__ the slice cap is 9 GiB and
+# that is reachable only by system services. On the 24 GiB __VM_NAME__ the slice cap is 9 GiB and
 # a full week of 22 Claude sessions peaked at 8.7 GiB used; the 8 GiB top-up file that a
 # 1:1 rule demanded never held a page while / filled to 100% (2026-10-04).
 rvc_swap_policy_gib() {
@@ -197,7 +197,7 @@ rvc_ensure_inotify_limits() {
   cat > "$conf" <<EOF
 # Raise inotify limits so VS Code Remote-SSH file watchers don't hit ENOSPC.
 # 8192 default is too small for a workspace with node_modules/.git + multiple
-# reconnecting Remote-SSH windows + extensions (Pylance and friends).
+# reconnecting Remote-SSH windows + extensions (an n8n extension, Pylance).
 # Managed by remote-vs-code deploy/10-base.sh — it never overwrites this file.
 fs.inotify.max_user_watches=$want_watches
 fs.inotify.max_user_instances=$want_instances

@@ -69,7 +69,7 @@ import threading
 import time
 
 DEFAULTS = {
-    "format": "{icon} {session_path} · {agent_title|tab_name|host}",
+    "format": "{transport}{icon} {session_path} · {agent_title|tab_name|host}",
     "max_length": 72,
     "ensure_session_token": True,
     "write_all_clients": True,
@@ -79,6 +79,13 @@ DEFAULTS = {
         "idle": "○",
         "done": "✓",
         "unknown": "·",
+    },
+    # How each client reached the VM, for {transport}. Rendered per client, so one
+    # session open in a mosh tab and an ssh tab shows a different glyph in each.
+    "transports": {
+        "mosh": "🌐",
+        "ssh": "🔐",
+        "local": "",
     },
 }
 
@@ -124,6 +131,8 @@ def load_config(path):
             cfg[key] = raw[key]
     if isinstance(raw.get("icons"), dict):
         cfg["icons"].update(raw["icons"])
+    if isinstance(raw.get("transports"), dict):
+        cfg["transports"].update(raw["transports"])
     return cfg
 
 
@@ -140,6 +149,7 @@ def _tokens(view, cfg):
         cwd = "~" + cwd[len(home):]
     return {
         "icon": icons.get(status, icons.get("unknown", "")),
+        "transport": (cfg.get("transports") or {}).get(view.get("transport") or "", ""),
         "status": status,
         "session": session,
         "workspace": workspace,
@@ -234,8 +244,8 @@ def sanitize_title(text):
     return "".join(ch for ch in text if ord(ch) >= 0x20 and ch != "\x7f")
 
 
-def client_ptys(session, procfs="/proc"):
-    """Controlling ptys of every attached client of `session`.
+def client_procs(session, procfs="/proc"):
+    """(pty, pid) of every attached client of `session`.
 
     A client is exactly `herdr --session <name>` (or bare `herdr` for the default
     session). Anything with a trailing subcommand is either the session server or a
@@ -261,8 +271,41 @@ def client_ptys(session, procfs="/proc"):
         except OSError:
             continue
         if pty.startswith("/dev/pts/"):
-            found.append(pty)
+            found.append((pty, entry))
     return found
+
+
+def client_ptys(session, procfs="/proc"):
+    """Controlling ptys of every attached client of `session`."""
+    return [pty for pty, _ in client_procs(session, procfs)]
+
+
+# The first of these found walking up from a client says how it arrived. mosh-server
+# detaches from the ssh that bootstrapped it, so a mosh client never sees sshd above
+# it. sshd-session is OpenSSH 9.8+'s per-connection process; older sshd forks "sshd".
+TRANSPORT_COMMS = {"mosh-server": "mosh", "sshd-session": "ssh", "sshd": "ssh"}
+
+
+def client_transport(pid, procfs="/proc"):
+    """'mosh', 'ssh', or 'local' when no known ancestor is found."""
+    seen = set()
+    while pid and pid not in ("0", "1") and pid not in seen and len(seen) < 64:
+        seen.add(pid)
+        try:
+            with open(os.path.join(procfs, pid, "stat"), encoding="utf-8", errors="replace") as fh:
+                stat = fh.read()
+        except OSError:
+            break
+        # "pid (comm) state ppid ..." — comm may itself hold spaces or parens.
+        lp, rp = stat.find("("), stat.rfind(")")
+        if lp == -1 or rp < lp:
+            break
+        kind = TRANSPORT_COMMS.get(stat[lp + 1:rp])
+        if kind:
+            return kind
+        rest = stat[rp + 1:].split()
+        pid = rest[1] if len(rest) > 1 else ""
+    return "local"
 
 
 def paint_ptys(ptys, title):
@@ -507,13 +550,23 @@ class Watcher(threading.Thread):
             stream.close()
 
     def flush(self, view, cfg, force=False):
-        title = render(view.view(), cfg)
+        base = view.view()
+        clients = []
+        if cfg.get("write_all_clients", True):
+            clients = [(pty, client_transport(pid)) for pty, pid in client_procs(self.session)]
+        # herdr paints its foreground client with ONE title and cannot say which client
+        # that is. When every client arrived the same way (the usual case) herdr gets
+        # that title, so its write and ours agree. Mixed, it gets the glyph-less title,
+        # which the direct paint below — and every re-assert — then corrects.
+        kinds = {kind for _, kind in clients}
+        title = render(dict(base, transport=kinds.pop()) if len(kinds) == 1 else base, cfg)
         if title == self.last_sent and not force:
             return
         res = one_shot(self.path, "client.window_title.set", {"title": title}, "rvc-title-set")
-        # herdr only reached the foreground client. Paint the rest ourselves.
-        if cfg.get("write_all_clients", True):
-            paint_ptys(client_ptys(self.session), title)
+        # herdr only reached the foreground client. Paint every client ourselves, each
+        # with its own {transport} glyph.
+        for pty, kind in clients:
+            paint_ptys([pty], render(dict(base, transport=kind), cfg))
         # Only remember it once herdr actually WROTE it. A session with no attached
         # client answers changed:false/no_foreground_client; latching that would mean the
         # tab never gets a title when you attach later, because from then on nothing
@@ -603,13 +656,14 @@ if [ ! -s "$CONF" ]; then
 # Edit freely; `systemctl restart rvc-herdr-title` picks changes up.
 #
 # Tokens: {icon} {status} {session} {workspace} {tab} {agent} {title} {host} {cwd}
+#         {transport}      — how THIS client reached the VM, from [transports] below
 #         {session_path}   — {session}, or {session}/{workspace} when they differ
 #         {agent_title}    — {title}, but ONLY when an agent is detected in the pane.
 #                            Plain {title} is whatever the pane last set, which for a
 #                            shell is "__DEV_USER__@host:~/dir" — the string this replaces.
 #         {tab_name}       — {tab}, unless it is herdr's auto-number ("1", "2", …)
 #         {a|b|c}          — the first that renders non-empty
-format = "{icon} {session_path} · {agent_title|tab_name|host}"
+format = "{transport}{icon} {session_path} · {agent_title|tab_name|host}"
 
 # Ellipsised at this length. Ghostty truncates the tab itself, but the window title
 # shows the full string, so this is deliberately generous.
@@ -634,6 +688,12 @@ blocked = "❓"
 idle    = "○"
 done    = "✓"
 unknown = "·"
+# {transport}, per client: found by walking up from each herdr client to mosh-server
+# or sshd. Replaces mosh's own "[mosh] " prefix once the Mac sets MOSH_TITLE_NOPREFIX=1.
+[transports]
+mosh  = "🌐"
+ssh   = "🔐"
+local = ""
 TOML
   chown "$DEV_USER:$DEV_USER" "$CONF"; chmod 0644 "$CONF"
   echo ">> $CONF: created"

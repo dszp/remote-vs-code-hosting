@@ -7,9 +7,13 @@
 # saved session shape (workspaces/tabs/panes/cwd/layout) come back after a reboot
 # without you attaching first.
 #
+#   hs-hc-restore.service   reopens hsc (hc) sessions that were running at shutdown
+#
 # Connectivity (tailscaled + sshd) already starts on boot on its own; this only
-# adds guaranteed-present *sessions*. It deliberately does NOT run `claude`
-# (interactive; auto-running an agent unattended is out of scope for this box).
+# adds guaranteed-present *sessions*. The tmux and herdr units never start `claude`.
+# hs-hc-restore does resume Claude conversations (`claude --resume <id>`), the same
+# ones herdr resumes when you open a session: each waits at its prompt for you and
+# takes no action on its own.
 #
 # RUN ON: the VM. run-remote uses sudo; we drop to the dev user for the --user unit.
 #   ./deploy/run-remote.sh __DEV_USER__@<vm> deploy/60-session-boot.sh DEV_USER=__DEV_USER__
@@ -78,7 +82,7 @@ UNIT
   # unit above, which owns 'default' only. Without this they exist only on demand: the
   # first VS Code terminal for a workspace creates one, and a reboot loses it. This
   # TEMPLATE makes any of them a boot service:
-  #     systemctl --user enable herdr-session@myproject.service
+  #     systemctl --user enable herdr-session@<name>.service
   # Enable (no --now) is the right verb when the session is already running on demand:
   # starting it would collide on the socket, whereas enable just takes effect next boot.
   echo ">> install user unit template herdr-session@.service"
@@ -104,6 +108,36 @@ else
   echo ">> herdr not installed at $HERDR_BIN — skipping herdr-session units"
 fi
 
+# --- hsc: reopen hc sessions at boot, only if hsc's backend is installed -------
+# hc keeps no sessions of its own, so after a reboot its core is down and Moshi's
+# HC tab is empty. This oneshot starts the core and reopens every hsc record that
+# was not stopped with `hsc x` (deploy/71 installs the backend). Workspaces closed
+# in Moshi stay closed. Running it again is harmless: live sessions are skipped.
+# PATH includes ~/.local/bin because that is where hc lives; the user manager's
+# PATH does not have it.
+HSC_LIB="/usr/local/lib/remote-vs-code/hs-hc"
+HC_BIN="/home/$DEV_USER/.local/bin/hc"
+if [ -r "$HSC_LIB" ] && [ -x "$HC_BIN" ]; then
+  echo ">> install user unit hs-hc-restore.service"
+  cat > "$UNIT_DIR/hs-hc-restore.service" <<UNIT
+[Unit]
+Description=Reopen hsc (hc) sessions that were running at shutdown (remote-vs-code)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 $HSC_LIB restore-all
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target
+UNIT
+  chown "$DEV_USER:$DEV_USER" "$UNIT_DIR/hs-hc-restore.service"
+else
+  echo ">> hsc backend or hc not installed — skipping hs-hc-restore.service"
+fi
+
 # Linger lets the user manager (and thus these units) run with no active login.
 loginctl enable-linger "$DEV_USER"
 
@@ -126,6 +160,12 @@ if [ -x "$HERDR_BIN" ]; then
       || echo "!! could not enable herdr-session@${s}.service" >&2
   done
   [ -z "$named" ] && echo ">> no named herdr sessions yet — enable later with: systemctl --user enable herdr-session@<name>.service"
+fi
+if [ -f "$UNIT_DIR/hs-hc-restore.service" ]; then
+  # enable only: sessions running now are already up, and the next boot is the test.
+  sudo -u "$DEV_USER" env $RUN systemctl --user enable hs-hc-restore.service >/dev/null 2>&1 \
+    && echo ">> enabled hs-hc-restore.service (takes effect next boot)" \
+    || echo "!! could not enable hs-hc-restore.service" >&2
 fi
 
 echo

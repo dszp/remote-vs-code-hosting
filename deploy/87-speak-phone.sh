@@ -191,6 +191,11 @@ def session_name() -> str:
             pass
     if os.environ.get("HERDR_SESSION"):
         return os.environ["HERDR_SESSION"]
+    # herdr-core has no session name a person chose; its spaces play that role and are
+    # read in where(). A fixed "hc" keeps its streams apart from a herdr session or a
+    # directory that happens to share a space's name.
+    if os.environ.get("HC_TERMINAL_ID"):
+        return "hc"
     return Path.cwd().name or "session"
 
 
@@ -214,7 +219,7 @@ def _herdr_state(session: str, ws_id: str, tab_id: str) -> tuple[str, str]:
     API listener down on all three long-running sessions here and it does NOT come back
     when they are reattached -- the servers keep running, so nothing looks broken, but
     every lookup after that returns nothing and the ids leak into the slug. A URL like
-    `MyGroup--w1--w1-tC` is exactly that: workspace w1, tab w1:tC, unresolved.
+    `NetSapiens--w1--w1-tC` is exactly that: workspace w1, tab w1:tC, unresolved.
 
     session.json is written by the server every few seconds and survives all of it. Tab
     ids carry the public tab number in hex -- `w1:tC` is tab 12 -- and
@@ -317,7 +322,42 @@ def where() -> dict:
             "pane": target,
             "tab": _run(args + ["#W"]),
         })
+        return info
+
+    # Checked last on purpose: herdr-core runs under systemd with a clean environment, so
+    # its terminals never inherit HERDR_* or TMUX, but anything started INSIDE an hc
+    # terminal (tmux, a herdr server) inherits HC_TERMINAL_ID. The innermost multiplexer
+    # has to win, and that is never hc when another one is present.
+    addr = os.environ.get("HC_TERMINAL_ID", "")
+    if addr:
+        space, tab, name = _hc_names(addr)
+        info.update({
+            "mux": "hc",
+            "pane": name or addr,
+            "workspace": space,
+            "tab": tab,
+        })
     return info
+
+
+def _hc_names(addr: str) -> tuple[str, str, str]:
+    """(space, tab, terminal name) for an herdr-core terminal, asked for BY ADDRESS.
+
+    `hc get` with no address picks a terminal for you; passing $HC_TERMINAL_ID keeps this
+    on the caller, the same rule where() applies to herdr. Names come from the `where`
+    label herdr-app sets ("<space> / <tab>"). A background worker started with `hc run
+    --bg` has no such label, so it gets its terminal name or address and still owns a
+    stream of its own.
+    """
+    try:
+        d = json.loads(_run(["hc", "get", addr, "--json"]) or "{}")
+    except ValueError:
+        return "", "", ""
+    if not isinstance(d, dict):
+        return "", "", ""
+    label = ((d.get("labels") or {}).get("where") or "").strip()
+    space, _, tab = label.partition(" / ")
+    return space.strip(), tab.strip(), (d.get("name") or "").strip()
 
 
 def identity(w: dict, session: str) -> tuple[str, str]:
@@ -1131,7 +1171,9 @@ def summary_page(m: dict, base: str, older: list[Path]) -> bytes:
             + hist +
             f"<audio id=au preload=auto src='{base}/audio.wav'></audio>"
             "")
-    tab_title = m["session"] + (f" / {m['path']}" if m.get("path") else "")
+    # "Summaries: " first: the terminal app names this server from the title of the page
+    # `/` redirects to, so the title has to say what the server is, not only whose it is.
+    tab_title = "Summaries: " + m["session"] + (f" / {m['path']}" if m.get("path") else "")
     return page(tab_title, body, PLAYER_JS)
 
 

@@ -330,6 +330,25 @@ It rides Tailscale like the other silent hosts — when Tailscale is fully down 
 (`op-mode token` / Pushover) and reconnects when Tailscale returns. Verify: `launchctl list | grep
 __VM_NAME__-forward` (col 1 = pid) and `op-mode status` on the VM (`mac sockets` ≥ 1 with the Mac up).
 
+**I. Git signing on the VM with the 1Password key.** Git on the VM signs through a socket the
+carrier in H forwards to `~/.ssh/mac-1p-agent.sock`: each signature is a TouchID prompt on the
+Mac, and the private key never leaves 1Password. That socket is **not** 1Password's own agent
+but `1p-sign-filter`, a small agent on the Mac in front of it that lists only the signing key,
+signs only with it, and refuses everything else (adding or removing keys, lock, extensions).
+The filter has to run on the Mac: on the VM, anything could bypass it by using the raw socket.
+```bash
+./mac/1p-sign-filter-setup.sh            # Mac: go test + build, LaunchAgent on ~/.1password-filter/sign.sock
+./mac/forward-agent-setup.sh             # Mac: carrier block now forwards the filter socket
+./deploy/run-remote.sh __VM_NAME__ deploy/88-git-ssh-signing.sh DEV_USER=__DEV_USER__ \
+    SIGNING_PUBKEY="ssh-ed25519 AAAA…"   # VM: public half of the signing key
+```
+Tags sign by default (`tag.gpgsign=true`); commits don't — turn that on per repo with
+`git config commit.gpgsign true`. With the Mac offline, signing fails with a message naming the
+missing socket. The agent protocol can't tell a signature from an SSH login, so if the exposed
+key is also an authentication key, the VM can use it to log in wherever it's trusted (still one
+TouchID each); a signing-only key avoids that. Verify on the VM:
+`SSH_AUTH_SOCK=~/.ssh/mac-1p-agent.sock ssh-add -l` shows exactly one key.
+
 ## Upgrading code-server (new releases)
 
 code-server is installed by `deploy/50-code-server.sh` via the upstream
@@ -488,7 +507,6 @@ Fill these in (all live in `env.example`; some also appear in `config/ssh-config
 | `__VM_SSH_ALIAS__` | Silent Remote-SSH host alias (dedicated no-TouchID key, `VM_ALIAS_HOST`) | `dev-auto` |
 | `__DEV_USER__` | Login user on the VM | `dev` |
 | `__MAC_USER__` | Your macOS username (op resolver paths/label) | `alex` |
-| `__GIT_ORG__` | Your git host org/user, so your own repos are not flagged third-party | `acme` |
 | `__PVE_HOST__` | Proxmox host (SSH target for VM creation) | `pve` |
 | `__PVE_TS_IP__` | Proxmox host's Tailscale IP (for `SSH_JUMP`) | `100.x.y.z` |
 | `__VM_LAN_IP__` | VM's LAN IP (pre-Tailscale, for `SSH_JUMP`) | `192.168.1.50` |
@@ -500,3 +518,5 @@ Fill these in (all live in `env.example`; some also appear in `config/ssh-config
 | `__TAILSCALE_FQDN__` / `__TAILSCALE_IP__` / `__TAILSCALE_NAME__` | VM's MagicDNS name / Tailscale IP | — |
 | `__TUNNEL_UUID__` | cloudflared tunnel UUID (generated) | — |
 | `__CF_HOSTNAME__` / `__CODE_SERVER_PORT__` / `__CODE_SERVER_PASSWORD__` | filled by scripts/env at run time | — |
+| `__GITHUB_ORG__` | A GitHub org/user whose repos `pvault add` treats as your own | `my-org` |
+| `__SIGNING_KEY_FINGERPRINT__` | `SHA256:` fingerprint of your git signing key (`mac/1p-sign-filter-setup.sh`, `ALLOW_FP`) | `SHA256:AbC…` |

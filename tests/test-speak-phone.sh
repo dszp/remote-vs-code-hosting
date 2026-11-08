@@ -224,6 +224,59 @@ print(m.identity(m.where(), '$1')[1])"
 is "a named slug is produced with no herdr server" \
    "$(fullslug Fixture w1 w1:tC w1:pE)" "Fixture--NetSapiens--super-portal"
 
+# ---- herdr-core (hc) terminals -------------------------------------------------------
+# herdr-app + herdr-core export only HC_TERMINAL_ID. Without this branch every hc agent
+# fell back to the directory name, so all agents in ~/workspace shared one stream. The
+# stub records the address it was asked about: `hc get` with no address picks a terminal
+# itself, which would bring back the focus-derived misfiling where() exists to prevent.
+HCB="$TMP/hcbin"; mkdir -p "$HCB"
+cat > "$HCB/hc" <<'STUB'
+#!/bin/sh
+printf '%s\n' "$*" > "$HC_STUB_ARGV"
+[ -n "${HC_STUB_FAIL:-}" ] && exit 3
+printf '%s\n' "$HC_STUB_JSON"
+STUB
+cat > "$HCB/tmux" <<'STUB'
+#!/bin/sh
+echo tmux-window
+STUB
+chmod +x "$HCB/hc" "$HCB/tmux"
+export HC_STUB_ARGV="$TMP/hc.argv"
+
+hcslug() { # $1 = stub JSON, then optional VAR=val env -> "<session>|<slug>"
+  local j="$1"; shift
+  env -u TMUX -u HERDR_PANE_ID -u HERDR_SESSION PATH="$HCB:/usr/bin:/bin" \
+    HC_STUB_JSON="$j" HC_TERMINAL_ID=t3 "$@" python3 -c "
+import importlib.util
+s=importlib.util.spec_from_loader('sp',None); m=importlib.util.module_from_spec(s)
+exec(open('$SP').read().split('if __name__')[0], m.__dict__)
+n=m.session_name(); print(n+'|'+m.identity(m.where(), n)[1])"
+}
+
+is "an hc terminal gets its space and tab" \
+   "$(hcslug '{"address":"t3","name":null,"labels":{"where":"NetSapiens / cli"}}')" \
+   "hc|hc--NetSapiens--cli"
+is "hc is asked about the CALLING terminal by address" "$(cat "$HC_STUB_ARGV")" "get t3 --json"
+is "same tab name in another space is another stream" \
+   "$(hcslug '{"address":"t3","name":null,"labels":{"where":"OneBill / cli"}}' | cut -d'|' -f2)" \
+   "hc--OneBill--cli"
+# Background workers (hc run --bg) carry no herdr-app labels.
+is "a named background worker keys on its name" \
+   "$(hcslug '{"address":"t3","name":"review","labels":{}}' | cut -d'|' -f2)" "hc--review"
+is "an unnamed background worker keys on its address" \
+   "$(hcslug '{"address":"t3","name":null,"labels":{}}' | cut -d'|' -f2)" "hc--t3"
+is "a failing hc degrades to the address, not the directory" \
+   "$(hcslug '{}' HC_STUB_FAIL=1 | cut -d'|' -f2)" "hc--t3"
+is "garbage from hc degrades to the address" \
+   "$(hcslug 'not json' | cut -d'|' -f2)" "hc--t3"
+# Anything started inside an hc terminal inherits HC_TERMINAL_ID; the inner mux wins.
+is "herdr inside an hc terminal still wins" \
+   "$(hcslug '{"labels":{"where":"X / Y"}}' HERDR_SESSION=Sess HERDR_PANE_ID=w1:p2 \
+       HERDR_WORKSPACE_ID=w1 HERDR_TAB_ID=w1:t2 | cut -d'|' -f1)" "Sess"
+is "tmux inside an hc terminal still wins" \
+   "$(hcslug '{"labels":{"where":"X / Y"}}' TMUX=/tmp/fake,1,0 TMUX_PANE=%1 | cut -d'|' -f2)" \
+   "tmux-window"
+
 # ---- one stream per AGENT, not per session -------------------------------------------
 # A herdr session holds several workspaces, each holding several tabs, each typically one
 # agent. Keyed on the session alone, six agents in one workspace share a stream and evict
@@ -443,6 +496,9 @@ like "index is titled for the list" "$INDEX" "<title>Claude summaries</title>"
 like "a summary links back to the list" "$(curl -sf "http://127.0.0.1:$PORT/s/Blocks")" "/all"
 
 PAGE="$(curl -sf "http://127.0.0.1:$PORT/s/Blocks")"
+# The terminal app names this server from the title of the page `/` redirects to, so a
+# summary's title says what the server is before saying whose summary it is.
+like "summary page title names the server" "$PAGE" "<title>Summaries: "
 like "summary page has a sentence"     "$PAGE" "First sentence."
 like "sentences carry a time offset" "$PAGE" "data-at='"
 # A whole sentence is a tap target, so an anchor inside one would otherwise bubble into

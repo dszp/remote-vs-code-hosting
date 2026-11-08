@@ -51,6 +51,41 @@ check("default session matches a bare `herdr`",
       f"got {ht.client_ptys('default', procfs=PROC)}")
 check("unknown session yields nothing", ht.client_ptys("Nope", procfs=PROC) == [], "")
 
+# ---- transport: walk up from the client to mosh-server / sshd ---------------------
+def mkstat(pid, comm, ppid):
+    d = os.path.join(PROC, str(pid)); os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "stat"), "w") as fh:
+        fh.write(f"{pid} ({comm}) S {ppid} {pid} {pid} 0 -1 4194560\n")
+
+mkstat(101, "herdr", 201); mkstat(201, "bash", 202); mkstat(202, "mosh-server", 1)
+mkstat(102, "herdr", 301); mkstat(301, "bash", 302); mkstat(302, "sshd-session", 303)
+mkstat(303, "sshd", 1)
+mkstat(104, "herdr", 401); mkstat(401, "bash", 402); mkstat(402, "sshd", 1)       # older OpenSSH
+mkstat(106, "herdr", 501); mkstat(501, "weird) (name", 1)                         # parens in comm
+mkstat(601, "loop", 602); mkstat(602, "loop", 601)                                # ppid cycle
+check("a mosh client is mosh", ht.client_transport("101", PROC) == "mosh",
+      ht.client_transport("101", PROC))
+check("an sshd-session client is ssh", ht.client_transport("102", PROC) == "ssh",
+      ht.client_transport("102", PROC))
+check("a pre-9.8 sshd client is ssh", ht.client_transport("104", PROC) == "ssh",
+      ht.client_transport("104", PROC))
+check("no known ancestor is local", ht.client_transport("106", PROC) == "local",
+      ht.client_transport("106", PROC))
+check("a ppid cycle terminates", ht.client_transport("601", PROC) == "local", "")
+check("a vanished pid is local", ht.client_transport("999", PROC) == "local", "")
+check("client_procs pairs each pty with its pid",
+      sorted(ht.client_procs("Alpha", procfs=PROC)) == [("/dev/pts/11", "101"), ("/dev/pts/12", "102")],
+      f"got {ht.client_procs('Alpha', procfs=PROC)}")
+
+cfg = ht.load_config(None)
+view = {"session": "MISC", "workspace": "chat", "tab": "chat", "status": "idle"}
+check("renders the mosh glyph", ht.render(dict(view, transport="mosh"), cfg) == "🌐○ MISC/chat · chat",
+      ht.render(dict(view, transport="mosh"), cfg))
+check("renders the ssh glyph", ht.render(dict(view, transport="ssh"), cfg) == "🔐○ MISC/chat · chat",
+      ht.render(dict(view, transport="ssh"), cfg))
+check("no transport renders no glyph", ht.render(view, cfg) == "○ MISC/chat · chat",
+      ht.render(view, cfg))
+
 # ---- painting a REAL pty ----------------------------------------------------------
 master, slave = pty.openpty()
 slave_path = os.ttyname(slave)

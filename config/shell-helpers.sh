@@ -12,6 +12,9 @@
 # why mosh doesn't cost you TouchID secrets or notifications on the VM.
 # Needs UDP 60000-61000 end to end: Tailscale carries it, the Cloudflare Access path does not
 # (there, fall back to `ssh __VM_NAME__-cf`).
+# No "[mosh] " title prefix: the VM's herdr-title daemon (deploy/69) marks each tab
+# itself, 🌐 for mosh and 🔐 for ssh, so the prefix only costs tab width.
+export MOSH_TITLE_NOPREFIX=1
 alias dv='mosh __VM_NAME__'
 alias da='mosh __VM_SSH_ALIAS__'
 

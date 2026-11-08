@@ -109,8 +109,8 @@ if [ ! -f "$CONF" ]; then
 #
 # source     absolute, or relative to ~/workspace. A directory OR a single file.
 # vault-path relative to the vault root; defaults to <source>. Use it to flatten
-#            a deep path — `my-project/docs/superpowers  my-project` publishes
-#            as plans/my-project/{plans,specs} rather than four levels of nesting.
+#            a deep path — `MyProject/docs/superpowers  MyProject` publishes as
+#            plans/MyProject/{plans,specs} instead of four levels of nesting.
 #
 # Blank lines and #-comments ignored. Split on the FIRST whitespace run, so a
 # vault-path MAY contain spaces ("REPORTS/Monthly Invoice Review"); a source may not.
@@ -124,12 +124,8 @@ if [ ! -f "$CONF" ]; then
 #     Their design docs are upstream's, not yours.
 # `pvault add` warns about both rather than refusing — override if you mean it.
 
-# Nothing is published until you add something. Examples — uncomment and edit,
-# or just run `pvault add <src> [dest]`, which appends here and mounts it.
-#
-# my-project/docs/superpowers            my-project
-# group/other-project/docs/superpowers   group/other-project
-# notes/reports                          REPORTS
+my-project/docs/superpowers                                my-project
+my-group/another-repo/docs/superpowers                     another-repo
 CONF
   echo "created $CONF"
 else
@@ -402,7 +398,7 @@ cmd_apply() {
   # Re-pointing an entry leaves the server holding notes at the OLD vault paths.
   # pvault-sync's normal order is pull-then-push, so the pull would RESURRECT those
   # orphans — writing them back through the new bind mount into the repo itself
-  # (a repo gained empty docs/plans/ and docs/specs/ trees this way), which then
+  # (MyProject gained empty docs/plans/ and docs/specs/ trees this way), which then
   # push back up, and every cycle mints fresh guids that invalidate the permalinks
   # in the frontmatter. A push here sees the old paths as locally absent and deletes
   # them server-side, which is the correct reading: the config no longer publishes them.
@@ -480,7 +476,7 @@ warn_about() {
   [ -f "$root/.git" ] && printf 'pvault: NOTE %s is a git WORKTREE — its files are another branch of the same repo, and the mount goes stale on `git worktree remove`.\n' "${root#"$WS"/}" >&2
   local origin; origin="$(git -C "$root" remote get-url origin 2>/dev/null || true)"
   case "$origin" in
-    *__MAC_USER__*|*__GIT_ORG__*|'') ;;
+    *__MAC_USER__*|*__GITHUB_ORG__*|'') ;;
     *) printf 'pvault: NOTE %s has a third-party origin (%s) — its docs are upstream'"'"'s.\n' "${root#"$WS"/}" "$origin" >&2 ;;
   esac
 }

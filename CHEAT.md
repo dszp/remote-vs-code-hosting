@@ -51,13 +51,13 @@ symlinks outright, so a symlink farm would sync nothing.
   ```yaml
   ---
   source_path: ~/workspace/<repo>/docs/superpowers/specs/<file>.md
-  workspace: MyGroup             # _rvc_ws_name — the project root / herdr session name
-  repo: my-project               # bare repo name (from origin, else the directory)
-  repo_url: https://github.com/__GIT_ORG__/my-project   # omit when there is no remote
+  workspace: NetSapiens          # _rvc_ws_name — the project root / herdr session name
+  repo: my-repo            # bare repo name (from origin, else the directory)
+  repo_url: https://github.com/__GITHUB_ORG__/my-repo   # omit when there is no remote
   permalink: https://realtime.__BASE_DOMAIN__/n/<guid>
   ---
   ```
-  Existing plans/specs are backfilled; write new ones the same way.
+  79 files across the published projects are backfilled; write new ones the same way.
   `permalink` survives content edits — the guid is keyed to the note's path. Folders bound
   wholesale (reports, not plans) are not stamped.
 - Config: `~/.config/remote-vs-code/plans-vault.conf` (`<source> [<vault-path>]`; source is
@@ -73,6 +73,19 @@ symlinks outright, so a symlink farm would sync nothing.
   its `#!/usr/bin/env node` shebang are both pinned to one nvm node version that a systemd
   user unit's PATH can't see — the wrapper picks the newest node that actually has the
   package. `rtmd whoami` prints the bound **vault id**.
+
+## Open VM files from Finder / Office (SMB over Tailscale)
+
+Set up by `deploy/98-samba-share.sh` (VM) and `mac/smb-mount-setup.sh` (Mac). Reachable only
+over Tailscale; SMB3 encrypted. `~/share` on the VM is always shared and mounts at `/Volumes/share`.
+
+- Mac: `./mac/smb-mount-setup.sh` once. A LaunchAgent keeps the share mounted (checks every 2 min,
+  log `~/Library/Logs/smb-mount.log`). Finder's Cmd-K hangs on "Connecting..." on this Mac.
+- Share another folder you own, read-write: `smbshare on ~/workspace` or
+  `smbshare on ~/workspace/NetSapiens [name]`. Mount it on the Mac with
+  `SMB_SHARE=<name> ./mac/smb-mount-setup.sh`.
+- Stop sharing it: `smbshare off <name>`. Show what's shared: `smbshare list`.
+- SMB password (separate from the login password): `sudo smbpasswd -a $USER` on the VM.
 
 ## Multiplexer: tmux or herdr (`mux` on the VM)
 Two multiplexers coexist as peers — never nest them. tmux is the default and the one VS Code
@@ -152,6 +165,46 @@ nothing — and its socket API has no kick-client request.
 | stop it, keep the layout | — | `hs x` |
 | throw it away entirely | `cs k` | `hs k` |
 | boot other clients off | `cs d` | not needed |
+
+## Sessions on hc (`hsc` on the VM — trial)
+
+`hsc` is `hs` running against hc (herdr-core) instead of herdr. `hs -c` does the same.
+It takes the same verbs. Each session runs in its own hc core, so it is one entry in
+Moshi's **HC** picker, and its workspaces fill that connection's sidebar. Workspaces and
+tabs you add or rename in Moshi are kept in the session.
+
+- `hsc [dir|name]` — attach, or restore a stopped session. Each tab that had Claude runs `claude --resume <id>`, then a shell after Claude exits.
+- `hsc r [name]` — restart: stop and reopen, so every Claude tab resumes on the current Claude Code (after an update). Works from inside the session too.
+- `hsc x [name]` — stop it. Run inside the session (`! hsc x` in Claude) to stop it and drop back to the shell you attached from.
+- `hsc <name> <workspace>` — reopen a workspace you closed in Moshi. Its Claude tabs resume.
+- `hsc <name> <dir>` — add a workspace in that folder to the session.
+- `hsc mv <src> <dest> [workspace]` — move a session's workspaces, or one of them, into another session. Running ones end and resume in `<dest>`; `<src>` is deleted once empty.
+- `hsc rm <name> <workspace>` — delete one closed workspace from a session for good.
+- `hsc ls` / `rm` / `k` — same as `hs`. A bare verb opens the fzf picker.
+- `hsc --copy [herdr-name] [as] [workspace]` — copy a **stopped** herdr session, or one of its workspaces, into hc. `[as]` can be an existing session; the workspaces are added to it.
+- `hs --copy [hsc-name] [as]` — copy a stopped hsc session back to herdr.
+- `ctrl+\` — detach from an hc terminal.
+
+hc keeps no sessions on disk, so `hsc` keeps its own records in
+`~/.local/state/hs/hc/<name>.json`. A Claude Code SessionStart hook writes each tab's
+session ID there as it starts, so a reboot restores the same conversations. If you
+`/exit` Claude, the tab restores as a plain shell next time.
+
+**Close workspace** in Moshi ends that workspace's terminals and takes it off the
+sidebar. `hsc` remembers it as closed: it stays closed through `hsc x` and reboots, keeps its
+Claude IDs, and `hsc <name>` lists it as closed until you reopen or delete it.
+
+To switch tabs from Moshi, open the session from Moshi's **HC** picker. A session attached
+from a shell (`hsc web` after **Skip**) shows one terminal, and Moshi's switcher can't
+change it.
+
+After a reboot, `hs-hc-restore.service` (installed by `deploy/60-session-boot.sh`) starts
+the hc core and reopens every session that was running, so they are in Moshi's HC picker
+without a shell step. Sessions stopped with `hsc x` stay stopped. Check it with
+`systemctl --user status hs-hc-restore` or `journalctl --user -u hs-hc-restore`.
+
+`hsc` starts the hc core if it isn't running. Opening a session from inside another hc
+terminal starts it without attaching; switch to it in Moshi.
 
 ## From the Mac (helpers in `~/.zshrc` — source: `config/shell-helpers.sh`)
 - `dv` — mosh in via `__VM_NAME__` (= `mosh __VM_NAME__`); 1Password agent → TouchID prompt
