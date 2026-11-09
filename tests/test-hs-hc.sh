@@ -296,6 +296,25 @@ sleep 4
 like "inside restart resumes claude" "$(cat "$HS_FAKESH_LOG")" "claude --resume sid-boot"
 is   "inside restart: one live terminal" "$(terms boot | wc -l)" "1"
 like "inside restart logged" "$(cat "$HS_HC_STATE/boot.restart.log")" "restarted boot"
+
+# --- restart -i: refuse while an agent is mid-turn (status from OSC 7501) ---
+agent() { # $1 state -> address of a terminal in boot's core reporting it
+  HC_SESSION="${PFX}boot" hc run --bg --json -- /bin/bash -c "printf '\033]7501;state=$1:app=fake\033\\\\'; sleep 60" \
+    | python3 -c 'import json,sys;print(json.load(sys.stdin)["address"])'
+}
+w="$(agent working)"; sleep 0.5
+out="$(hsc r -i boot 2>&1)"; rc=$?
+is   "restart -i refuses while working" "$rc" "1"
+like "restart -i names the busy agent" "$out" "still busy: $w (working)"
+is   "restart -i left it running" "$(terms boot | grep -c "^$w")" "1"
+out="$( (cd "$HOME/proj" && HC_TERMINAL_ID="$w" HC_TERMINAL_SOCKET="$RUN/${PFX}boot.sock" bash "$HSABS" -c r --idle boot) 2>&1 )"
+like "restart -i skips the caller's own working tab" "$out" "including this terminal"
+sleep 4
+b="$(agent blocked)"; d="$(agent done)"; sleep 0.5
+like "restart -i refuses while blocked" "$(hsc r --idle boot 2>&1)" "still busy: $b (blocked)"
+HC_SESSION="${PFX}boot" hc kill "$b" >/dev/null 2>&1; sleep 0.5
+like "restart -i goes ahead when only done/idle" "$(hsc r -i boot 2>&1)" "restarted boot"
+like "-i is restart-only" "$(hsc x -i boot 2>&1)" "only applies to restart"
 hsc x boot >/dev/null
 like "nothing to restore" "$(python3 "$LIBABS" restore-all 2>&1)" "no running hsc sessions"
 

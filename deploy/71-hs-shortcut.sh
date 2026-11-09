@@ -72,7 +72,8 @@ own hc core: one entry in Moshi's HC picker, its workspaces in that sidebar.
   hsc <name> <dir>            add a workspace in that folder to the session
   hsc mv <src> <dest> [ws]    move a session's workspaces (or one) into another session
   hsc x [name]                stop: record each tab and end its terminal (works from inside)
-  hsc r|restart [name]        stop and reopen; every Claude tab resumes (picks up a new claude)
+  hsc r|restart [-i] [name]   stop and reopen; every Claude tab resumes (picks up a new claude)
+                              -i|--idle: only if no agent is working or waiting on a prompt
   hsc <name> <workspace>      reopen a workspace closed in Moshi (its Claude tabs resume)
   hsc rm <name> <workspace>   delete one workspace from a session for good
   hsc --copy [name] [as] [ws] copy a stopped herdr session (or one workspace) into hc;
@@ -330,10 +331,11 @@ fi
 case "${1:-}" in
   s|switch|select|attach|x|stop|k|kill|rm|delete|r|restart)
     act="$1"; shift
-    assume_yes=0; sel=""; sub=""
+    assume_yes=0; idle=0; sel=""; sub=""
     for a in "$@"; do
       case "$a" in
         -y|-f|--yes|--force) assume_yes=1 ;;
+        -i|--idle) case "$act" in r|restart) idle=1 ;; *) die "-i|--idle only applies to restart" ;; esac ;;
         *) if [ -z "$sel" ]; then sel="$a"; elif [ -z "$sub" ]; then sub="$a"; fi ;;
       esac
     done
@@ -366,7 +368,7 @@ case "${1:-}" in
         launch "$sel" "$PWD" ;;
       r|restart)
         [ "$HS_BACKEND" = hc ] || die "restart is hsc only; for herdr use 'hs x $sel' then 'hs $sel'"
-        hcb restart "$sel" ;;
+        if [ "$idle" = 1 ]; then hcb restart "$sel" --idle; else hcb restart "$sel"; fi ;;
       x|stop)
         if [ "$st" = stopped ]; then
           printf 'hs: %s is already stopped\n' "$sel"; exit 0
@@ -489,7 +491,7 @@ Subcommands (all output is for hs, not people, except errors):
   status NAME                    running | stopped | (nothing: unknown)
   hook start|end                 Claude Code hook; JSON on stdin
   restore-all                    boot: reopen every session that was not stopped
-  restart NAME                   stop, then reopen without attaching
+  restart NAME [--idle]          stop, then reopen without attaching (--idle: only if no agent is mid-turn)
   from-herdr SRC DEST [WS]       herdr session (or one workspace) -> new or existing hsc session
   to-herdr SRC DEST              stopped hsc record -> herdr session.json
 """
@@ -1161,11 +1163,37 @@ def take_down(rec: dict) -> bool:
     return bool(live)
 
 
-def cmd_restart(name: str) -> None:
-    """Stop then reopen, so every Claude tab starts again on the current claude."""
+# Agent states (hc's OSC 7501 reports) that mean a turn is still under way:
+# `working`, or `blocked` on a permission prompt or question. idle, done and error
+# have no turn to lose. Plain shells report nothing, so they are never checked.
+BUSY = ("working", "blocked")
+
+
+def busy_agents(rec: dict) -> list[str]:
+    """`workspace/tab (state)` for each agent mid-turn, leaving out the caller's
+    own terminal: a Claude tab running `hsc r -i` is itself working."""
+    me = my_terminal(rec)
+    names = {t.get("terminal"): f"{ws['name']}/{t['name']}"
+             for ws in rec["workspaces"] for t in ws["tabs"]}
+    out = []
+    for t in live_terminals(rec):
+        st = t.get("status")
+        st = st.get("state") if isinstance(st, dict) else st
+        if st in BUSY and t["address"] != me:
+            out.append(f"{names.get(t['address'], t['address'])} ({st})")
+    return out
+
+
+def cmd_restart(name: str, idle_only: bool = False) -> None:
+    """Stop then reopen, so every Claude tab starts again on the current claude.
+    With idle_only, refuse while any agent is mid-turn."""
     rec = load(name)
     if rec is None:
         die(f"no hsc session named {name}")
+    if idle_only:
+        busy = busy_agents(rec)
+        if busy:
+            die(f"not restarting {name}; still busy: {', '.join(busy)}")
     me = inside(rec)
     if me:
         log = STATE / f"{name}.restart.log"
@@ -1545,6 +1573,8 @@ def main(argv: list[str]) -> None:
             move(*args)
         elif cmd == "restart" and len(args) == 1:
             cmd_restart(args[0])
+        elif cmd == "restart" and len(args) == 2 and args[1] == "--idle":
+            cmd_restart(args[0], idle_only=True)
         elif cmd == "restart-detached" and len(args) == 1:
             restart(args[0])
         elif cmd == "restore-all" and not args:
