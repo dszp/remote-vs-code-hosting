@@ -315,6 +315,40 @@ like "restart -i refuses while blocked" "$(hsc r --idle boot 2>&1)" "still busy:
 HC_SESSION="${PFX}boot" hc kill "$b" >/dev/null 2>&1; sleep 0.5
 like "restart -i goes ahead when only done/idle" "$(hsc r -i boot 2>&1)" "restarted boot"
 like "-i is restart-only" "$(hsc x -i boot 2>&1)" "only applies to restart"
+
+# --- restart -iw: wait for idle, then restart ---
+export HS_HC_WAIT_POLL=0.3
+later() { # $1 state now, $2 seconds, $3 state after -> terminal address
+  HC_SESSION="${PFX}boot" hc run --bg --json -- /bin/bash -c \
+    "printf '\033]7501;state=$1:app=fake\033\\\\'; sleep $2; printf '\033]7501;state=$3:app=fake\033\\\\'; sleep 60" \
+    | python3 -c 'import json,sys;print(json.load(sys.stdin)["address"])'
+}
+w="$(later working 2 done)"; sleep 0.5
+out="$(timeout 20 bash -c "cd '$HOME/proj' && bash '$HSABS' -c r -iw boot" 2>&1)"
+like "restart -iw reports what it waits on" "$out" "waiting on $w (working)"
+like "restart -iw restarts once idle" "$out" "restarted boot"
+w="$(later working 2 done)"; sleep 0.5
+out="$(timeout 20 bash -c "cd '$HOME/proj' && bash '$HSABS' -c r --wait boot" 2>&1)"
+like "--wait alone implies idle" "$out" "waiting on $w (working)"
+# From inside: detaches, and waits for the caller's own tab too.
+w="$(later working 2 done)"; sleep 0.5
+out="$( (cd "$HOME/proj" && HC_TERMINAL_ID="$w" HC_TERMINAL_SOCKET="$RUN/${PFX}boot.sock" bash "$HSABS" -c r -wi boot) 2>&1 )"
+like "inside -iw detaches" "$out" "restarts once every agent is idle"
+like "inside -iw: second one refused" "$( (cd "$HOME/proj" && HC_TERMINAL_ID="$w" HC_TERMINAL_SOCKET="$RUN/${PFX}boot.sock" bash "$HSABS" -c r -iw boot) 2>&1 )" "already waiting"
+sleep 1
+is   "inside -iw: caller's tab still alive mid-turn" "$(terms boot | grep -c "^$w$")" "1"
+sleep 5
+like "inside -iw logged the wait" "$(cat "$HS_HC_STATE/boot.restart.log")" "waiting on $w (working)"
+like "inside -iw then restarted" "$(cat "$HS_HC_STATE/boot.restart.log")" "restarted boot"
+is   "inside -iw: caller's tab gone" "$(terms boot | grep -c "^$w$")" "0"
+# A session stopped while waiting is not started again.
+agent working >/dev/null; sleep 0.5
+( cd "$HOME/proj" && timeout 20 bash "$HSABS" -c r -iw boot > "$HOME/wait.out" 2>&1 ) &
+sleep 1; hsc x boot >/dev/null; wait
+like "stopped while waiting: not restarted" "$(cat "$HOME/wait.out")" "stopped while waiting"
+is   "stopped while waiting: core stays down" "$(core_on boot)" "down"
+hsc boot >/dev/null; sleep 0.5
+unset HS_HC_WAIT_POLL
 hsc x boot >/dev/null
 like "nothing to restore" "$(python3 "$LIBABS" restore-all 2>&1)" "no running hsc sessions"
 

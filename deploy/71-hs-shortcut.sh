@@ -74,6 +74,7 @@ own hc core: one entry in Moshi's HC picker, its workspaces in that sidebar.
   hsc x [name]                stop: record each tab and end its terminal (works from inside)
   hsc r|restart [-i] [name]   stop and reopen; every Claude tab resumes (picks up a new claude)
                               -i|--idle: only if no agent is working or waiting on a prompt
+                              -w|--wait (or -iw): wait until they all are idle, then restart
   hsc <name> <workspace>      reopen a workspace closed in Moshi (its Claude tabs resume)
   hsc rm <name> <workspace>   delete one workspace from a session for good
   hsc --copy [name] [as] [ws] copy a stopped herdr session (or one workspace) into hc;
@@ -331,11 +332,13 @@ fi
 case "${1:-}" in
   s|switch|select|attach|x|stop|k|kill|rm|delete|r|restart)
     act="$1"; shift
-    assume_yes=0; idle=0; sel=""; sub=""
+    assume_yes=0; idle=0; wait=0; sel=""; sub=""
     for a in "$@"; do
       case "$a" in
         -y|-f|--yes|--force) assume_yes=1 ;;
-        -i|--idle) case "$act" in r|restart) idle=1 ;; *) die "-i|--idle only applies to restart" ;; esac ;;
+        -i|--idle|-w|--wait|-iw|-wi)
+          case "$act" in r|restart) ;; *) die "$a only applies to restart" ;; esac
+          idle=1; case "$a" in -i|--idle) ;; *) wait=1 ;; esac ;;
         *) if [ -z "$sel" ]; then sel="$a"; elif [ -z "$sub" ]; then sub="$a"; fi ;;
       esac
     done
@@ -368,7 +371,8 @@ case "${1:-}" in
         launch "$sel" "$PWD" ;;
       r|restart)
         [ "$HS_BACKEND" = hc ] || die "restart is hsc only; for herdr use 'hs x $sel' then 'hs $sel'"
-        if [ "$idle" = 1 ]; then hcb restart "$sel" --idle; else hcb restart "$sel"; fi ;;
+        flags=(); [ "$idle" = 1 ] && flags+=(--idle); [ "$wait" = 1 ] && flags+=(--wait)
+        hcb restart "$sel" "${flags[@]}" ;;
       x|stop)
         if [ "$st" = stopped ]; then
           printf 'hs: %s is already stopped\n' "$sel"; exit 0
@@ -491,7 +495,8 @@ Subcommands (all output is for hs, not people, except errors):
   status NAME                    running | stopped | (nothing: unknown)
   hook start|end                 Claude Code hook; JSON on stdin
   restore-all                    boot: reopen every session that was not stopped
-  restart NAME [--idle]          stop, then reopen without attaching (--idle: only if no agent is mid-turn)
+  restart NAME [--idle] [--wait] stop, then reopen without attaching (--idle: only if no agent
+                                 is mid-turn; --wait: wait until none is, then restart)
   from-herdr SRC DEST [WS]       herdr session (or one workspace) -> new or existing hsc session
   to-herdr SRC DEST              stopped hsc record -> herdr session.json
 """
@@ -1069,14 +1074,14 @@ def kill_and_wait(rec: dict, addrs: list[str]) -> None:
         pass
 
 
-def outlive_terminal(argv: list[str], log: str, env: dict) -> None:
+def outlive_terminal(argv: list[str], log: str, env: dict, unit: str | None = None) -> None:
     """Run argv so it survives the caller's hc terminal being killed. hc ends a
     terminal by killing its whole process scope, setsid or not, so the job runs
     as its own transient systemd unit; setsid is the fallback without systemd."""
     keep = ("PATH", "HOME", "SHELL", "LANG", "HC_SESSION", "XDG_RUNTIME_DIR")
     pass_env = {k: v for k, v in env.items() if k in keep or k.startswith("HS_")}
     line = "exec " + " ".join(shlex.quote(a) for a in argv) + f" >>{shlex.quote(log)} 2>&1"
-    sysrun = ["systemd-run", "--user", "--collect", "--quiet"]
+    sysrun = ["systemd-run", "--user", "--collect", "--quiet"] + ([f"--unit={unit}"] if unit else [])
     sysrun += [f"--setenv={k}={v}" for k, v in pass_env.items()]
     try:
         r = subprocess.run(sysrun + ["--", "/bin/sh", "-c", line],
@@ -1130,13 +1135,13 @@ def cmd_stop(name: str) -> None:
     end_terminals(rec, [t["address"] for t in live])
 
 
-def run_detached(sub: str, args: list[str], log: Path, me: str) -> None:
+def run_detached(sub: str, args: list[str], log: Path, me: str, unit: str | None = None) -> None:
     """Hand a job that ends the caller's own terminal to a process that outlives it."""
     env = dict(os.environ)
     env.pop("HC_TERMINAL_ID", None)
     env["HS_HC_KILL_AFTER"] = me
     log.write_text("")
-    outlive_terminal([sys.executable, os.path.abspath(__file__), sub, *args], str(log), env)
+    outlive_terminal([sys.executable, os.path.abspath(__file__), sub, *args], str(log), env, unit)
 
 
 def inside(rec: dict) -> str | None:
@@ -1169,32 +1174,69 @@ def take_down(rec: dict) -> bool:
 BUSY = ("working", "blocked")
 
 
-def busy_agents(rec: dict) -> list[str]:
-    """`workspace/tab (state)` for each agent mid-turn, leaving out the caller's
-    own terminal: a Claude tab running `hsc r -i` is itself working."""
-    me = my_terminal(rec)
+def busy_agents(rec: dict, skip: str | None = None) -> list[str]:
+    """`workspace/tab (state)` for each agent mid-turn, except terminal `skip`."""
     names = {t.get("terminal"): f"{ws['name']}/{t['name']}"
              for ws in rec["workspaces"] for t in ws["tabs"]}
     out = []
     for t in live_terminals(rec):
         st = t.get("status")
         st = st.get("state") if isinstance(st, dict) else st
-        if st in BUSY and t["address"] != me:
+        if st in BUSY and t["address"] != skip:
             out.append(f"{names.get(t['address'], t['address'])} ({st})")
     return out
 
 
-def cmd_restart(name: str, idle_only: bool = False) -> None:
+def wait_idle(name: str) -> bool:
+    """Block until no agent in the session is mid-turn, the caller's own tab
+    included (a Claude tab that asked for this finishes its turn first). False
+    if the session stopped meanwhile: waiting must not turn into a start."""
+    last = None
+    while True:
+        rec = load(name)
+        if rec is None or not live_terminals(rec):
+            return False
+        busy = busy_agents(rec)
+        if not busy:
+            return True
+        if busy != last:
+            print(f"hs: waiting on {', '.join(busy)}", flush=True)
+            last = busy
+        time.sleep(float(os.environ.get("HS_HC_WAIT_POLL", "5")))
+
+
+def restart_when_idle(name: str) -> None:
+    if wait_idle(name):
+        restart(name)
+    else:
+        print(f"hs: {name} stopped while waiting; not restarting", flush=True)
+
+
+def cmd_restart(name: str, idle_only: bool = False, wait: bool = False) -> None:
     """Stop then reopen, so every Claude tab starts again on the current claude.
-    With idle_only, refuse while any agent is mid-turn."""
+    idle_only refuses while any agent is mid-turn (the caller's own tab aside);
+    wait holds off until none is, then restarts."""
     rec = load(name)
     if rec is None:
         die(f"no hsc session named {name}")
+    me = inside(rec)
+    if wait:
+        if not me:
+            return restart_when_idle(name)
+        # From inside, waiting in the foreground would hold the caller's tab busy
+        # forever; hand the wait to a named job that can be stopped.
+        unit = f"hs-restart-{hc_session_name(core_of(rec)) or name}"
+        if subprocess.run(["systemctl", "--user", "is-active", "--quiet", f"{unit}.service"]).returncode == 0:
+            die(f"a restart of {name} is already waiting; cancel it: systemctl --user stop {unit}")
+        log = STATE / f"{name}.restart.log"
+        run_detached("restart-detached", [name, "--wait"], log, me, unit=unit)
+        print(f"hs: {name} restarts once every agent is idle, this tab included "
+              f"(log: {log}; cancel: systemctl --user stop {unit})", file=sys.stderr)
+        return
     if idle_only:
-        busy = busy_agents(rec)
+        busy = busy_agents(rec, skip=my_terminal(rec))
         if busy:
             die(f"not restarting {name}; still busy: {', '.join(busy)}")
-    me = inside(rec)
     if me:
         log = STATE / f"{name}.restart.log"
         run_detached("restart-detached", [name], log, me)
@@ -1571,12 +1613,12 @@ def main(argv: list[str]) -> None:
             cmd_move(*args)
         elif cmd == "move-detached" and len(args) in (2, 3):
             move(*args)
-        elif cmd == "restart" and len(args) == 1:
-            cmd_restart(args[0])
-        elif cmd == "restart" and len(args) == 2 and args[1] == "--idle":
-            cmd_restart(args[0], idle_only=True)
+        elif cmd == "restart" and args and set(args[1:]) <= {"--idle", "--wait"}:
+            cmd_restart(args[0], idle_only="--idle" in args[1:], wait="--wait" in args[1:])
         elif cmd == "restart-detached" and len(args) == 1:
             restart(args[0])
+        elif cmd == "restart-detached" and args[1:] == ["--wait"]:
+            restart_when_idle(args[0])
         elif cmd == "restore-all" and not args:
             cmd_restore_all()
         elif cmd == "hook" and len(args) == 1:
