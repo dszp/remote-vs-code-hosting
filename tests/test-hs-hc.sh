@@ -316,6 +316,14 @@ HC_SESSION="${PFX}boot" hc kill "$b" >/dev/null 2>&1; sleep 0.5
 like "restart -i goes ahead when only done/idle" "$(hsc r -i boot 2>&1)" "restarted boot"
 like "-i is restart-only" "$(hsc x -i boot 2>&1)" "only applies to restart"
 
+# --- `.` is this terminal's session ---
+cur="$(terms boot | head -1)"
+is   "'.' resolves from inside" "$(HC_TERMINAL_ID="$cur" HC_TERMINAL_SOCKET="$RUN/${PFX}boot.sock" python3 "$LIBABS" current 2>&1)" "boot"
+like "'.' outside a session is refused" "$(hsc r .)" "not in an hsc session"
+out="$( (cd "$HOME/proj" && HC_TERMINAL_ID="$cur" HC_TERMINAL_SOCKET="$RUN/${PFX}boot.sock" bash "$HSABS" -c r -i .) 2>&1 )"
+like "'.' works with a verb" "$out" "restarting boot"
+sleep 4
+
 # --- restart -iw: wait for idle, then restart ---
 export HS_HC_WAIT_POLL=0.3
 later() { # $1 state now, $2 seconds, $3 state after -> terminal address

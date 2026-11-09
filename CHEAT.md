@@ -175,6 +175,7 @@ tabs you add or rename in Moshi are kept in the session.
 
 - `hsc [dir|name]` — attach, or restore a stopped session. Each tab that had Claude runs `claude --resume <id>`, then a shell after Claude exits.
 - `hsc r [name]` — restart: stop and reopen, so every Claude tab resumes on the current Claude Code (after an update). Works from inside the session too.
+- Any `[name]` can be `.` for the session your terminal is in: `hsc r -iw .`, `hsc x .`, `hsc mv . <dest> <ws>`.
 - `hsc r -i [name]` (`--idle`) — the same, but refuses and lists the busy tabs while any agent is working or waiting on a permission prompt or question. Your own tab doesn't count.
 - `hsc r -iw [name]` (`--wait`, `-w`) — wait until every agent is idle, then restart. Run from inside the session it waits in the background, including for your own tab to finish its turn; cancel with `systemctl --user stop hs-restart-<name>`. If the session is stopped meanwhile, it isn't restarted.
 - `hsc x [name]` — stop it. Run inside the session (`! hsc x` in Claude) to stop it and drop back to the shell you attached from.

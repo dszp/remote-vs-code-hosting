@@ -77,6 +77,7 @@ own hc core: one entry in Moshi's HC picker, its workspaces in that sidebar.
                               -w|--wait (or -iw): wait until they all are idle, then restart
   hsc <name> <workspace>      reopen a workspace closed in Moshi (its Claude tabs resume)
   hsc rm <name> <workspace>   delete one workspace from a session for good
+  A <name> of `.` means the session this terminal is in (e.g. `hsc r -iw .`).
   hsc --copy [name] [as] [ws] copy a stopped herdr session (or one workspace) into hc;
                               [as] may be an existing session, which it is added to
 There is no `hs d`: herdr renders per-client, so a stale client costs nothing.
@@ -324,8 +325,9 @@ fi
 if [ "${1:-}" = mv ]; then
   [ "$HS_BACKEND" = hc ] || die "mv is hsc only"
   [ $# -ge 3 ] || die "usage: hsc mv <src> <dest> [workspace]"
-  check_name "$2"; check_name "$3"
-  hcb move "$2" "$3" ${4:+"$4"}
+  src="$2"; [ "$src" = . ] && { src="$(hcb current)" || exit 1; }
+  check_name "$src"; check_name "$3"
+  hcb move "$src" "$3" ${4:+"$4"}
   exit $?
 fi
 
@@ -352,6 +354,11 @@ case "${1:-}" in
       esac
       # An empty selection means the user pressed Esc. Silent success, like cs.
       [ -n "$sel" ] || exit 0
+    fi
+    # `.` is the session this terminal belongs to.
+    if [ "$sel" = . ]; then
+      [ "$HS_BACKEND" = hc ] || die "'.' (this session) is hsc only"
+      sel="$(hcb current)" || exit 1
     fi
     check_name "$sel"
     st="$(require_session "$sel")"
@@ -865,6 +872,15 @@ def ws_names(rec: dict) -> str:
 
 
 # --- verbs ----------------------------------------------------------------
+def cmd_current() -> None:
+    """Print the session the caller's hc terminal belongs to."""
+    for rec in all_records():
+        if inside(rec):
+            print(rec["name"])
+            return
+    die("'.' means this session, but this terminal is not in an hsc session")
+
+
 def cmd_sessions() -> None:
     for rec in all_records():
         status = "running" if live_terminals(rec) else "stopped"
@@ -1599,6 +1615,8 @@ def main(argv: list[str]) -> None:
     try:
         if cmd == "sessions":
             cmd_sessions()
+        elif cmd == "current" and not args:
+            cmd_current()
         elif cmd == "status" and len(args) == 1:
             cmd_status(args[0])
         elif cmd == "open" and len(args) in (2, 3):
