@@ -457,6 +457,42 @@ You're probably away from the console (1Password locked). The script stops and r
 it halted. Re-run the same command when you're back to TouchID-unlock — the scripts are
 idempotent, so retries are safe.
 
+## Known issue: the Mac resolver fails on macOS 27 (waiting on 1Password)
+
+On macOS 27, every read through the Mac resolver (`mac/op-resolver-setup.sh`) fails, and no
+TouchID prompt appears. On the VM you see `op(mac): resolve failed … (ERR op-read-failed)`. The
+Mac's `~/.op-resolver/access.log` shows the cause:
+
+```
+FAIL [<account>] op://… :: … error initializing client: found no accounts for filter "<account>"
+```
+
+The same `op read --account <account> 'op://…'` works from a terminal on the Mac. It fails only
+when launchd starts `op`.
+
+**Cause:** a 1Password CLI problem on macOS 27, not this repo's setup. When `op` runs under a
+launchd job, which has no app above it in the process tree, it can't read the 1Password app's
+integration settings in the app's group container. It then falls back to its own empty config
+and finds no accounts. 1Password has acknowledged the macOS 27 problem and is investigating:
+[macOS 27: CLI says no accounts configured](https://www.1password.community/developers-69/updated-macos-27-cli-now-says-no-accounts-configured-for-use-25582),
+[desktop app integration fails under TCC group container protection](https://www.1password.community/1password-at-work-58/op-cli-desktop-app-integration-fails-under-macos-tcc-group-container-protection-25123),
+[permission prompt can't persist in daemon contexts](https://www.1password.community/developers-69/op-cli-triggers-macos-access-data-from-other-apps-prompt-on-every-run-in-daemon-contexts-root-cause-unconditional-policies-json-probe-even-with-a-service-account-token-25335).
+
+**Already done here, and kept for when the fix lands:**
+- The LaunchAgent starts `socat` directly. With `listen.sh` it started `/bin/bash`, an Apple
+  platform binary that macOS denies silently, with no prompt.
+- `socat` (listed as **socat1**) is allowed **Data shared by 1Password and affiliated apps**
+  under System Settings → Privacy & Security → Files & Folders. That alone did not fix it.
+- `resolve.sh` writes the first line of `op`'s error to `access.log`.
+
+**Until 1Password fixes it:** read secrets on the VM through a service-account vault
+(`op-mode token`, or a passphrase-gated service-account wrapper). Items that only your own
+account can see, such as items in your personal vault, can't be read from the VM.
+
+**When a 1Password CLI or app update lands:** update `op` on the Mac, run
+`launchctl kickstart -k gui/$(id -u)/com.__MAC_USER__.op-resolver`, then run one `op read` from the VM.
+If `access.log` shows `OK`, the issue is fixed; delete this section.
+
 ## Verification
 
 See the "Verification" section of `PLAN.local.md`. The core check: start a marker in

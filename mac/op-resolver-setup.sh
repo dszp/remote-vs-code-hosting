@@ -51,10 +51,16 @@ if [ "\${#ref}" -gt 512 ] || printf '%s' "\$ref" | LC_ALL=C grep -q '[[:cntrl:]]
 if [ -n "\$acct" ] && { [ "\${#acct}" -gt 128 ] || printf '%s' "\$acct" | LC_ALL=C grep -Eqv '^[A-Za-z0-9._@-]+\$'; }; then
   printf '%s WARN bad-account(%s) -> default\n' "\$ts" "\$acct" >> "\$LOG"; acct=""; fi
 account="\${acct:-\$OP_ACCOUNT_DEFAULT}"
-if val="\$("\$OP" read --account "\$account" -- "\$ref" 2>/dev/null)"; then
+# op's stderr never carries the secret, only why a read failed; keep its first line for the
+# log (not the reply) so a failure that never reaches TouchID can be diagnosed on the Mac.
+errf="\$(mktemp "\$HOME/.op-resolver/err.XXXXXX")"; trap 'rm -f "\$errf"' EXIT
+if val="\$("\$OP" read --account "\$account" -- "\$ref" 2>"\$errf")"; then
   printf '%s\n' "\$val"; printf '%s OK   [%s] %s\n' "\$ts" "\$account" "\$ref" >> "\$LOG"
-else printf 'ERR op-read-failed\n'; printf '%s FAIL [%s] %s\n' "\$ts" "\$account" "\$ref" >> "\$LOG"; fi
+else printf 'ERR op-read-failed\n'
+  printf '%s FAIL [%s] %s :: %s\n' "\$ts" "\$account" "\$ref" "\$(head -n1 "\$errf" | LC_ALL=C tr -d '[:cntrl:]' | cut -c1-300)" >> "\$LOG"; fi
 RESOLVE
+# listen.sh is kept for running the listener by hand from a terminal. The LaunchAgent below
+# does NOT use it (see there).
 cat > "$DIR/listen.sh" <<LISTEN
 #!/bin/bash
 set -euo pipefail
@@ -65,13 +71,24 @@ LISTEN
 chmod +x "$DIR/resolve.sh" "$DIR/listen.sh"
 
 echo ">> LaunchAgent"
+# The agent runs socat DIRECTLY, not via listen.sh. macOS privacy (TCC) holds a launchd job's
+# first program responsible for everything it spawns, op included. When that was listen.sh, the
+# responsible program was /bin/bash, an Apple platform binary, which TCC denies silently with no
+# prompt ("Platform binary prompting is 'Deny'"). op then can't reach the 1Password app and
+# reports "found no accounts". With socat responsible, grant /opt/homebrew/bin/socat access to
+# other apps' data in System Settings → Privacy & Security (Full Disk Access if that is not enough).
+# unlink-early replaces listen.sh's `rm -f` of a stale socket.
 PLIST="$HOME/Library/LaunchAgents/com.__MAC_USER__.op-resolver.plist"
 cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>com.__MAC_USER__.op-resolver</string>
-  <key>ProgramArguments</key><array><string>$DIR/listen.sh</string></array>
+  <key>ProgramArguments</key><array>
+    <string>$SOCAT</string><string>-t120</string>
+    <string>UNIX-LISTEN:$MAC_SOCK,fork,mode=0600,unlink-early</string>
+    <string>EXEC:$DIR/resolve.sh</string>
+  </array>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>StandardErrorPath</key><string>$DIR/stderr.log</string>
   <key>StandardOutPath</key><string>$DIR/stdout.log</string>

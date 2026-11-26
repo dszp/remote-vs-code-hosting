@@ -232,6 +232,12 @@ is "a named slug is produced with no herdr server" \
 HCB="$TMP/hcbin"; mkdir -p "$HCB"
 cat > "$HCB/hc" <<'STUB'
 #!/bin/sh
+if [ "$1" = connect ]; then  # doc.get over the protocol: echo the request id's reply
+  cat > "$HC_STUB_ARGV.connect"
+  [ -n "${HC_STUB_DOC_FAIL:-}" ] && exit 3
+  printf '{"id":1,"jsonrpc":"2.0","result":{"value":%s}}\n' "${HC_STUB_DOC:-null}"
+  exit 0
+fi
 printf '%s\n' "$*" > "$HC_STUB_ARGV"
 [ -n "${HC_STUB_FAIL:-}" ] && exit 3
 printf '%s\n' "$HC_STUB_JSON"
@@ -245,7 +251,7 @@ export HC_STUB_ARGV="$TMP/hc.argv"
 
 hcslug() { # $1 = stub JSON, then optional VAR=val env -> "<session>|<slug>"
   local j="$1"; shift
-  env -u TMUX -u HERDR_PANE_ID -u HERDR_SESSION PATH="$HCB:/usr/bin:/bin" \
+  env -u TMUX -u HERDR_PANE_ID -u HERDR_SESSION -u HC_SESSION PATH="$HCB:/usr/bin:/bin" \
     HC_STUB_JSON="$j" HC_TERMINAL_ID=t3 "$@" python3 -c "
 import importlib.util
 s=importlib.util.spec_from_loader('sp',None); m=importlib.util.module_from_spec(s)
@@ -269,6 +275,44 @@ is "a failing hc degrades to the address, not the directory" \
    "$(hcslug '{}' HC_STUB_FAIL=1 | cut -d'|' -f2)" "hc--t3"
 is "garbage from hc degrades to the address" \
    "$(hcslug 'not json' | cut -d'|' -f2)" "hc--t3"
+# hsc gives every session its own core; addresses repeat across cores, so the core is the session.
+is "a named hc core is the session, so t3 in two cores is two streams" \
+   "$(hcslug '{"address":"t3","name":null,"labels":{}}' HC_SESSION=meta)" "meta|meta--t3"
+is "the same address in another core is another stream" \
+   "$(hcslug '{"address":"t3","name":null,"labels":{}}' HC_SESSION=s42 | cut -d'|' -f2)" "s42--t3"
+# Current herdr-app: labels carry ids only; names live in the core's `herdr-app` document.
+# One line: the protocol is line-delimited, and real replies are.
+HCDOC='{"spaces":[{"id":"spA","name":"NetSapiens","folder":"/w/ns","tabs":[{"id":"tbA","name":"cli"},{"id":"tbB","name":""}]},{"id":"spB","name":"","folder":"/home/u/OneBill","tabs":[{"id":"tbC","name":"cli"}]}]}'
+IDS() { printf '{"address":"t3","name":%s,"labels":{"herdr.space":"%s","herdr.tab":"%s"}}' "$1" "$2" "$3"; }
+is "herdr-app ids resolve to space and tab names" \
+   "$(hcslug "$(IDS null spA tbA)" HC_STUB_DOC="$HCDOC" HC_SESSION=meta)" "meta|meta--NetSapiens--cli"
+is "the names are asked for with doc.get herdr-app" \
+   "$(python3 -c "import json,sys;r=json.load(open(sys.argv[1]));print(r['method'],r['params']['name'])" "$HC_STUB_ARGV.connect")" \
+   "doc.get herdr-app"
+is "an unnamed space shows its folder, as herdr-app does" \
+   "$(hcslug "$(IDS null spB tbC)" HC_STUB_DOC="$HCDOC" | cut -d'|' -f2)" "hc--OneBill--cli"
+is "an unnamed tab falls back to the address" \
+   "$(hcslug "$(IDS null spA tbB)" HC_STUB_DOC="$HCDOC" | cut -d'|' -f2)" "hc--NetSapiens--t3"
+is "a space missing from the document degrades to the address" \
+   "$(hcslug "$(IDS null spZ tbZ)" HC_STUB_DOC="$HCDOC" | cut -d'|' -f2)" "hc--t3"
+is "a failing doc.get degrades to the address" \
+   "$(hcslug "$(IDS null spA tbA)" HC_STUB_DOC_FAIL=1 | cut -d'|' -f2)" "hc--t3"
+is "a where label still wins over ids" \
+   "$(hcslug '{"address":"t3","name":null,"labels":{"where":"X / Y","herdr.space":"spA","herdr.tab":"tbA"}}' \
+       HC_STUB_DOC="$HCDOC" | cut -d'|' -f2)" "hc--X--Y"
+hcwhere() { # $1 = stub JSON, then optional VAR=val env -> where()'s core and address
+  local j="$1"; shift
+  env -u TMUX -u HERDR_PANE_ID -u HERDR_SESSION -u HC_SESSION PATH="$HCB:/usr/bin:/bin" \
+    HC_STUB_JSON="$j" HC_TERMINAL_ID=t3 "$@" python3 -c "
+import importlib.util
+s=importlib.util.spec_from_loader('sp',None); m=importlib.util.module_from_spec(s)
+exec(open('$SP').read().split('if __name__')[0], m.__dict__)
+w=m.where(); print(w['core']+' '+w['address']+' '+w['pane'])"
+}
+is "where() records the core and the address, even when the pane is a name" \
+   "$(hcwhere '{"address":"t3","name":"review","labels":{}}' HC_SESSION=meta)" "meta t3 review"
+is "the unnamed default core is recorded as default" \
+   "$(hcwhere '{"address":"t3","name":null,"labels":{}}')" "default t3 t3"
 # Anything started inside an hc terminal inherits HC_TERMINAL_ID; the inner mux wins.
 is "herdr inside an hc terminal still wins" \
    "$(hcslug '{"labels":{"where":"X / Y"}}' HERDR_SESSION=Sess HERDR_PANE_ID=w1:p2 \
@@ -276,6 +320,33 @@ is "herdr inside an hc terminal still wins" \
 is "tmux inside an hc terminal still wins" \
    "$(hcslug '{"labels":{"where":"X / Y"}}' TMUX=/tmp/fake,1,0 TMUX_PANE=%1 | cut -d'|' -f2)" \
    "tmux-window"
+
+# ---- the agent's description ------------------------------------------------------
+# Moshi lists agents by their terminal title, which Claude Code sets to a description of
+# the session. Unnamed tabs leave the stream identity at an address like t2v, so the
+# title is what tells two summaries apart on the phone.
+at() { python3 -c "
+import importlib.util,sys
+s=importlib.util.spec_from_loader('sp',None); m=importlib.util.module_from_spec(s)
+exec(open('$SP').read().split('if __name__')[0], m.__dict__)
+print(m.agent_title(sys.argv[1]))" "$1"; }
+is "a title is the agent's description"       "$(at 'Fix the widget')" "Fix the widget"
+is "the activity glyph is dropped"             "$(at '✳ Fix the widget')" "Fix the widget"
+is "a braille spinner is dropped too"          "$(at '⠂ Fix the widget')" "Fix the widget"
+is "a shell prompt title is not a description" "$(at '__DEV_USER__@__VM_NAME__:~/workspace')" ""
+is "a bare program name is not a description"  "$(at 'Claude Code')" ""
+hcagent() { # $1 = stub JSON -> where()['agent']
+  env -u TMUX -u HERDR_PANE_ID -u HERDR_SESSION -u HC_SESSION PATH="$HCB:/usr/bin:/bin" \
+    HC_STUB_JSON="$1" HC_TERMINAL_ID=t3 python3 -c "
+import importlib.util
+s=importlib.util.spec_from_loader('sp',None); m=importlib.util.module_from_spec(s)
+exec(open('$SP').read().split('if __name__')[0], m.__dict__)
+print(m.where().get('agent',''))"
+}
+is "an hc terminal's title is recorded as the agent" \
+   "$(hcagent '{"address":"t3","name":null,"title":"✳ Audio summaries","labels":{}}')" "Audio summaries"
+is "a shell-owned hc title records no agent" \
+   "$(hcagent '{"address":"t3","name":null,"title":"__DEV_USER__@__VM_NAME__:~","labels":{}}')" ""
 
 # ---- one stream per AGENT, not per session -------------------------------------------
 # A herdr session holds several workspaces, each holding several tabs, each typically one
@@ -469,6 +540,11 @@ is "empty input is refused" "$RC" "1"
 # killing it leaves the real server holding the port with a deleted state dir. That
 # survivor then answers the next run's requests from a store that no longer exists, and
 # every server assertion fails for reasons that have nothing to do with the code.
+# One summary published from an hc terminal whose title describes the agent.
+printf 'Agent card sentence.\n' | env -u TMUX -u HERDR_PANE_ID -u HERDR_SESSION -u HC_SESSION \
+  PATH="$HCB:$PATH" HC_TERMINAL_ID=t2v \
+  HC_STUB_JSON='{"address":"t2v","name":null,"title":"✳ Widget refactor","labels":{}}' \
+  "$SP" >/dev/null 2>&1
 PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
 printf 'PORT=%s\n' "$PORT" >> "$TMP/speak.env"
 sp serve >"$TMP/server.log" 2>&1 &
@@ -493,6 +569,12 @@ like "and it points at a session page" "$LOC" "/s/"
 INDEX="$(curl -sf "http://127.0.0.1:$PORT/all")"
 like "index lists a session"        "$INDEX" "Alpha"
 like "index is titled for the list" "$INDEX" "<title>Claude summaries</title>"
+like "the card leads with the agent's description" "$INDEX" "<div class=n>Widget refactor</div>"
+like "and keeps the stream identity beneath it"   "$INDEX" "<div class=who>hc"
+APAGE="$(curl -sf "http://127.0.0.1:$PORT/s/hc--t2v")"
+like "the summary page heads with the description" "$APAGE" "<h1>Widget refactor</h1>"
+like "and names the stream under it"               "$APAGE" "<p class=who>hc / t2v</p>"
+like "the sticky header shows the description"    "$APAGE" "<div class=mini>Widget refactor</div>"
 like "a summary links back to the list" "$(curl -sf "http://127.0.0.1:$PORT/s/Blocks")" "/all"
 
 PAGE="$(curl -sf "http://127.0.0.1:$PORT/s/Blocks")"

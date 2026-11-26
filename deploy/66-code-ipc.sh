@@ -61,7 +61,7 @@ install -o "$DEV_USER" -g "$DEV_USER" -m 0644 /dev/stdin "$DROPIN" <<'WRAPPER'
 # python probe per invocation.
 
 # Does this unix socket have a live listener?  exit 0 = yes, 1 = dead/absent.
-_vscode_sock_live() {
+__vscode_sock_live() {
     python3 - "$1" <<'PY' 2>/dev/null
 import socket, sys
 s = socket.socket(socket.AF_UNIX); s.settimeout(0.5)
@@ -75,10 +75,10 @@ PY
 # Newest vscode-ipc socket (by mtime) that is actually live; prints it, or fails.
 # mtime is the socket's CREATION time, so this means "newest WINDOW", which is not
 # necessarily the window you were last working in — see the stamp below.
-_vscode_newest_live() {
+__vscode_newest_live() {
     local dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" s
     for s in $(ls -t "$dir"/vscode-ipc-*.sock 2>/dev/null); do
-        _vscode_sock_live "$s" && { printf '%s' "$s"; return 0; }
+        __vscode_sock_live "$s" && { printf '%s' "$s"; return 0; }
     done
     return 1
 }
@@ -98,12 +98,12 @@ if [ -n "$VSCODE_IPC_HOOK_CLI" ] && [ "$TERM_PROGRAM" = vscode ]; then
 fi
 
 # The stamped socket, if it is still live; prints it, or fails.
-_vscode_stamped_live() {
+__vscode_stamped_live() {
     local s
     [ -r "$_VSCODE_IPC_STAMP" ] || return 1
     IFS= read -r s < "$_VSCODE_IPC_STAMP" || return 1
     [ -n "$s" ] || return 1
-    _vscode_sock_live "$s" && { printf '%s' "$s"; return 0; }
+    __vscode_sock_live "$s" && { printf '%s' "$s"; return 0; }
     return 1
 }
 
@@ -112,8 +112,8 @@ _vscode_stamped_live() {
 # else the last-used-window stamp, else newest live socket as a last guess.
 code() {
     local live
-    if [ -z "$VSCODE_IPC_HOOK_CLI" ] || ! _vscode_sock_live "$VSCODE_IPC_HOOK_CLI"; then
-        live=$(_vscode_stamped_live) || live=$(_vscode_newest_live) || live=""
+    if [ -z "$VSCODE_IPC_HOOK_CLI" ] || ! __vscode_sock_live "$VSCODE_IPC_HOOK_CLI"; then
+        live=$(__vscode_stamped_live) || live=$(__vscode_newest_live) || live=""
         [ -n "$live" ] && export VSCODE_IPC_HOOK_CLI="$live"
     fi
     command code "$@"

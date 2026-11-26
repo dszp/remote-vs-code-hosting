@@ -108,6 +108,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -191,11 +192,12 @@ def session_name() -> str:
             pass
     if os.environ.get("HERDR_SESSION"):
         return os.environ["HERDR_SESSION"]
-    # herdr-core has no session name a person chose; its spaces play that role and are
-    # read in where(). A fixed "hc" keeps its streams apart from a herdr session or a
-    # directory that happens to share a space's name.
+    # hsc runs each session as its own hc core, named by HC_SESSION; the unnamed default
+    # core is "hc". The core belongs in the name because terminal addresses repeat across
+    # cores: t4x in meta and t4x in s42 are different agents, and a fixed "hc" gave them one
+    # stream that each evicted the other from.
     if os.environ.get("HC_TERMINAL_ID"):
-        return "hc"
+        return os.environ.get("HC_SESSION") or "hc"
     return Path.cwd().name or "session"
 
 
@@ -321,6 +323,7 @@ def where() -> dict:
             "mux": "tmux",
             "pane": target,
             "tab": _run(args + ["#W"]),
+            "agent": agent_title(_run(args + ["#T"])),
         })
         return info
 
@@ -330,34 +333,94 @@ def where() -> dict:
     # has to win, and that is never hc when another one is present.
     addr = os.environ.get("HC_TERMINAL_ID", "")
     if addr:
-        space, tab, name = _hc_names(addr)
+        space, tab, name, title = _hc_names(addr)
         info.update({
             "mux": "hc",
+            "agent": agent_title(title),
             "pane": name or addr,
             "workspace": space,
             "tab": tab,
+            # What identifies the terminal for other tools (where-was-i keys agents by these):
+            # `pane` may be a name, and an address means nothing without its core.
+            "core": os.environ.get("HC_SESSION") or "default",
+            "address": addr,
         })
     return info
 
 
-def _hc_names(addr: str) -> tuple[str, str, str]:
-    """(space, tab, terminal name) for an herdr-core terminal, asked for BY ADDRESS.
+def agent_title(t: str) -> str:
+    """The agent's description from its terminal title, or "" when it is not one.
+
+    Claude Code titles its terminal with a short description of the session -- the same
+    text Moshi's agent list shows -- prefixed by an activity glyph. A shell that owns the
+    title instead says "user@host:path", and a bare program name describes nothing. The
+    title is read when the summary is published, which is while the agent is running.
+    """
+    t = re.sub(r"^[^\w(\[]+", "", (t or "").strip()).strip()
+    if re.match(r"^[\w.-]+@[\w.-]+(:|\s|$)", t):
+        return ""
+    if t.lower() in ("", "claude", "claude code", "bash", "zsh", "sh", "fish",
+                     socket.gethostname().lower()):
+        return ""
+    return t[:120]
+
+
+def _hc_names(addr: str) -> tuple[str, str, str, str]:
+    """(space, tab, terminal name, title) for an herdr-core terminal, asked for BY ADDRESS.
 
     `hc get` with no address picks a terminal for you; passing $HC_TERMINAL_ID keeps this
-    on the caller, the same rule where() applies to herdr. Names come from the `where`
-    label herdr-app sets ("<space> / <tab>"). A background worker started with `hc run
-    --bg` has no such label, so it gets its terminal name or address and still owns a
-    stream of its own.
+    on the caller, the same rule where() applies to herdr. herdr-app labels each terminal
+    with opaque ids (`herdr.space`, `herdr.tab`) and keeps the names in its `herdr-app`
+    document on the core, so the ids are resolved there. Older herdr-app builds set a
+    `where` label ("<space> / <tab>") instead; it is still honoured when present. A
+    background worker started with `hc run --bg` has neither, so it gets its terminal name
+    or address and still owns a stream of its own.
     """
     try:
         d = json.loads(_run(["hc", "get", addr, "--json"]) or "{}")
     except ValueError:
-        return "", "", ""
+        return "", "", "", ""
     if not isinstance(d, dict):
-        return "", "", ""
-    label = ((d.get("labels") or {}).get("where") or "").strip()
-    space, _, tab = label.partition(" / ")
-    return space.strip(), tab.strip(), (d.get("name") or "").strip()
+        return "", "", "", ""
+    name = (d.get("name") or "").strip()
+    title = d.get("title") or ""
+    labels = d.get("labels") or {}
+    label = (labels.get("where") or "").strip()
+    if label:
+        space, _, tab = label.partition(" / ")
+        return space.strip(), tab.strip(), name, title
+    space_id, tab_id = labels.get("herdr.space"), labels.get("herdr.tab")
+    if not space_id:
+        return "", "", name, title
+    space, tab = _hc_layout_names(space_id, tab_id)
+    return space, tab, name, title
+
+
+def _hc_layout_names(space_id: str, tab_id: str | None) -> tuple[str, str]:
+    """(space, tab) names for herdr-app ids, from the `herdr-app` document on this core.
+
+    Asked over `hc connect` (doc.get), which reaches the same core `hc get` did -- the
+    caller's, via the HC_* environment. herdr-app leaves a space's name empty until it is
+    renamed and shows its folder instead; the same fallback applies here. An unnamed tab
+    stays empty so the terminal name or address stands in for it.
+    """
+    req = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "doc.get",
+                      "params": {"name": "herdr-app"}})
+    try:
+        out = subprocess.run(["hc", "connect"], input=req + "\n", capture_output=True,
+                             text=True, timeout=5)
+        resp = json.loads(out.stdout.splitlines()[0]) if out.returncode == 0 else {}
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return "", ""
+    value = ((resp.get("result") or {}).get("value") or {}) if isinstance(resp, dict) else {}
+    for sp in value.get("spaces") or []:
+        if not isinstance(sp, dict) or sp.get("id") != space_id:
+            continue
+        space = (sp.get("name") or "").strip() or Path(sp.get("folder") or "").name
+        tab = next(((t.get("name") or "").strip() for t in sp.get("tabs") or []
+                    if isinstance(t, dict) and t.get("id") == tab_id), "")
+        return space, tab
+    return "", ""
 
 
 def identity(w: dict, session: str) -> tuple[str, str]:
@@ -1078,13 +1141,17 @@ def index_page() -> bytes:
         for _, m, n in sorted(latest, key=lambda r: -r[0]):
             more = f" &middot; {n} kept" if n > 1 else ""
             w = m.get("where") or {}
+            # The agent's description leads when there is one; the session identity
+            # (otherwise the headline) then joins the line beneath it.
+            agent = w.get("agent") or ""
             ident = " &middot; ".join(html.escape(b) for b in
-                                      (m.get("path"), w.get("pane")) if b)
+                                      (m["session"] if agent else "", m.get("path"),
+                                       w.get("pane")) if b)
             done = " done" if m.get("read") else ""
             rows.append(
                 f"<div class='card{done}' data-url='/r/{html.escape(m['slug'])}/{m['ts']}'>"
                 f"<a class=body href='/s/{html.escape(m['slug'])}'>"
-                f"<div class=n>{html.escape(m['session'])}</div>"
+                f"<div class=n>{html.escape(agent or m['session'])}</div>"
                 + (f"<div class=who>{ident}</div>" if ident else "") +
                 f"<div class=m>{ago(m['created'])} &middot; {m['sentences']} sentences{more}</div>"
                 f"<div class=t>{html.escape(m['title'][:130])}</div></a>"
@@ -1138,7 +1205,10 @@ def summary_page(m: dict, base: str, older: list[Path]) -> bytes:
     bits = [b for b in (w.get("mux"), w.get("pane")) if b]
     if w.get("branch"):
         bits.append(w["branch"] + ("*" if w.get("dirty") else ""))
-    head = f"<h1>{html.escape(m['session'])}</h1>"
+    agent = w.get("agent") or ""
+    head = f"<h1>{html.escape(agent or m['session'])}</h1>"
+    if agent:
+        head += f"<p class=who>{html.escape(m['session'])}</p>"
     if m.get("path"):
         head += f"<h2 class=path>{html.escape(m['path'])}</h2>"
     if bits:
@@ -1147,7 +1217,7 @@ def summary_page(m: dict, base: str, older: list[Path]) -> bytes:
     # before reading anything, and at the top of a long page it must not be scrolled to.
 
 
-    body = (f"<div class=mini>{html.escape(m['session'])}</div>" + head +
+    body = (f"<div class=mini>{html.escape(agent or m['session'])}</div>" + head +
             f"<p class=sub>{ago(m['created'])} &middot; {m['sentences']} sentences &middot; "
             f"<a href='/all'>all sessions</a></p>"
             + (f"<div class=row><a class=back href='/all'>&larr; All</a>"
